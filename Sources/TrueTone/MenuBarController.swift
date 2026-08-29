@@ -22,6 +22,7 @@ final class MenuBarController: NSObject {
     private let readout = ReadoutView()
     private let strength = StrengthView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
+    private let dockToggle = NSMenuItem(title: "Показывать в доке", action: nil, keyEquivalent: "")
 
     override init() {
         super.init()
@@ -71,6 +72,10 @@ final class MenuBarController: NSObject {
         }
         menu.addItem(loginToggle)
 
+        dockToggle.target = self
+        dockToggle.action = #selector(toggleDock)
+        menu.addItem(dockToggle)
+
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Выйти", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -89,6 +94,7 @@ final class MenuBarController: NSObject {
         header.set(on: isEnabled)
         strength.set(settings.intensityPercent)
         loginToggle.state = LoginItem.isEnabled ? .on : .off
+        dockToggle.state = settings.showInDock ? .on : .off
 
         statusItem.isVisible = true
         if let b = statusItem.button {
@@ -143,12 +149,58 @@ final class MenuBarController: NSObject {
         loginToggle.state = LoginItem.isEnabled ? .on : .off
     }
 
+    @objc private func toggleDock() { setDockVisible(!settings.showInDock) }
+
+    private func setDockVisible(_ on: Bool) {
+        settings.showInDock = on
+        NSApp.setActivationPolicy(on ? .regular : .accessory)
+        if on { NSApp.activate(ignoringOtherApps: false) }
+        refreshUI()
+    }
+
     @objc private func quit() {
         display.restore()
         NSApp.terminate(nil)
     }
 
     func shutdown() { display.restore() }
+
+    /// Right-click Dock menu — plain items only (Dock menus can't host custom views).
+    func makeDockMenu() -> NSMenu {
+        let m = NSMenu()
+
+        let onOff = NSMenuItem(title: isEnabled ? "True Tone: вкл" : "True Tone: выкл",
+                               action: #selector(dockToggleEnabled), keyEquivalent: "")
+        onOff.target = self
+        onOff.state = isEnabled ? .on : .off
+        m.addItem(onOff)
+
+        let strengthMenu = NSMenu()
+        for p in [25, 50, 75, 100] {
+            let it = NSMenuItem(title: "\(p) %", action: #selector(dockSetIntensity(_:)), keyEquivalent: "")
+            it.target = self
+            it.tag = p
+            it.state = (settings.intensityPercent == p) ? .on : .off
+            strengthMenu.addItem(it)
+        }
+        let strengthHost = NSMenuItem(title: "Сила", action: nil, keyEquivalent: "")
+        strengthHost.submenu = strengthMenu
+        m.addItem(strengthHost)
+
+        m.addItem(.separator())
+        let hide = NSMenuItem(title: "Скрыть из дока", action: #selector(dockHide), keyEquivalent: "")
+        hide.target = self
+        m.addItem(hide)
+
+        return m
+    }
+
+    @objc private func dockToggleEnabled() { setEnabled(!settings.enabled) }
+    @objc private func dockSetIntensity(_ sender: NSMenuItem) {
+        setIntensity(sender.tag)
+        strength.set(sender.tag)
+    }
+    @objc private func dockHide() { setDockVisible(false) }
 
     /// A killed / Ctrl-C'd process must never leave the monitor tinted. SIGHUP is
     /// only ignored (so a terminal-launched instance survives the terminal closing).
