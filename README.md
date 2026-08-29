@@ -95,11 +95,13 @@ Menu: on/off switch · live readout (+ tint swatch) · **Сила** slider (0–
 
 ### Hiding / restoring the menu-bar icon
 
-`Скрыть иконку` in the menu hides it. To bring it back (or reach the controls
-when Sequoia has hidden the item on its own):
+`Скрыть иконку` in the menu hides it. To bring it back (any one of):
 
-- **⌃⌥⌘T** — global hotkey, opens the menu at the top-right whether or not the
-  icon is drawn (Carbon `RegisterEventHotKey`, no Accessibility permission).
+- **Open TrueTone** from Finder / Launchpad / Spotlight — the app is
+  single-instance, so a second launch just tells the running one to show the
+  icon and open the menu (`main.swift` posts `com.dmitriy.truetone.reveal`,
+  the running instance calls `revealMenu()`). This is the primary way.
+- **⌃⌥⌘T** — global hotkey (Carbon `RegisterEventHotKey`, no Accessibility).
 - **`truetone`** command (symlinked to `/usr/local/bin` by `install.sh`):
   `truetone show | hide | toggle | on | off | <0-100> | status`. Changes apply
   within ~1 s (`MenuBarController.reconcile` polls UserDefaults each tick).
