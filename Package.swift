@@ -6,12 +6,22 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
+            name: "TrueTone",
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("IOKit"),
+                .linkedFramework("CoreGraphics"),
+            ]
+        ),
+        .executableTarget(
             name: "ttprobe",
+            swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("Foundation"),
             ]
-        )
+        ),
     ]
 )

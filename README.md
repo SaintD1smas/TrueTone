@@ -74,6 +74,29 @@ tables on the Mi.
 
 ---
 
+## Running it
+
+```
+swift build
+./.build/debug/TrueTone        # menu-bar icon (sun), no Dock icon, no window
+```
+
+Menu: on/off · Интенсивность (25/50/75/100 %) · live readout · 10 s test sweep · Выйти.
+Settings persist in `~/Library/Preferences/TrueTone.plist`. On quit / SIGTERM /
+SIGINT the calibrated gamma is restored, so a killed process never leaves the
+Mi tinted.
+
+Env for debugging: `TRUETONE_DEBUG=1` (per-tick log to stderr),
+`TRUETONE_FORCE_ON=1` (start enabled without touching prefs).
+
+**Verified 2026-08-29:** enabled → Mi gamma top entry goes `R 1.000 / G 0.936 /
+B 0.840` (warm), gamma-readback matches the computed gains, ambient `~4900 K @
+150 lx` → screen driven to `~5820 K`; quit restores identity gamma.
+
+Not yet: `.app` bundle + launch-at-login (needs a bundle id for `SMAppService`,
+or a `LaunchAgent` plist); adaptation curve is a sane first guess, tune with
+`swift run ttprobe --watch 30` under changing light.
+
 ## App design (v1)
 
 Menu-bar app (`LSUIElement` / `.accessory`), ~1 Hz loop:
