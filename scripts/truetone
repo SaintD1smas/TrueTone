@@ -1,0 +1,37 @@
+#!/bin/bash
+# Control TrueTone without the menu-bar icon. The running app picks changes up
+# within ~1 second; if it isn't running they apply on next launch.
+set -euo pipefail
+D=com.dmitriy.truetone
+
+usage() {
+    cat <<'EOF'
+truetone show            show the menu-bar icon
+truetone hide            hide it (this command / ⌃⌥⌘T bring it back)
+truetone toggle          flip icon visibility
+truetone on | off        turn the True Tone effect on / off
+truetone <0-100>         set "Сила" (adaptation strength)
+truetone status          print current settings
+EOF
+    exit 1
+}
+
+[ $# -eq 1 ] || usage
+
+read_bool() { defaults read "$D" "$1" 2>/dev/null || echo 1; }
+
+case "$1" in
+    show)   defaults write "$D" showInMenuBar -bool true ;;
+    hide)   defaults write "$D" showInMenuBar -bool false ;;
+    toggle) [ "$(read_bool showInMenuBar)" = 1 ] \
+              && defaults write "$D" showInMenuBar -bool false \
+              || defaults write "$D" showInMenuBar -bool true ;;
+    on)     defaults write "$D" enabled -bool true ;;
+    off)    defaults write "$D" enabled -bool false ;;
+    status) defaults read "$D" 2>/dev/null || echo "(no settings yet — all defaults)"; exit 0 ;;
+    ''|*[!0-9]*) usage ;;
+    *)      { [ "$1" -ge 0 ] && [ "$1" -le 100 ]; } || usage
+            defaults write "$D" intensityPercent -int "$1" ;;
+esac
+
+echo "ok"

@@ -11,6 +11,7 @@ final class MenuBarController: NSObject {
 
     private var timer: Timer?
     private var lastTick = Date()
+    private var hotKey: HotKey?
 
     private let debug = ProcessInfo.processInfo.environment["TRUETONE_DEBUG"] == "1"
     private let forceOn = ProcessInfo.processInfo.environment["TRUETONE_FORCE_ON"] == "1"
@@ -22,25 +23,24 @@ final class MenuBarController: NSObject {
     private let readout = ReadoutView()
     private let strength = StrengthView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
-    private let dockToggle = NSMenuItem(title: "Показывать в доке", action: nil, keyEquivalent: "")
-    private let menuBarToggle = NSMenuItem(title: "Показывать в меню-баре", action: nil, keyEquivalent: "")
+    private let menuBarToggle = NSMenuItem(title: "Скрыть иконку (⌃⌥⌘T вернёт)", action: nil, keyEquivalent: "")
+
+    private var lastSyncedEnabled = false
+    private var lastSyncedMenuBar = true
+    private var lastSyncedPercent = -1
 
     override init() {
         super.init()
         model.intensity = Double(settings.intensityPercent) / 100.0
-        // Stable identity so macOS tracks this item's visibility by name instead
-        // of an anonymous "Item-N" slot that Sequoia readily hides.
+        // Stable identity so macOS tracks this item's visibility by name.
         statusItem.autosaveName = "com.dmitriy.truetone.status"
-        statusItem.behavior = []
         buildMenu()
         refreshUI()
         installSignalHandlers()
 
-        if sensor == nil { readout.message("⚠️ датчик света недоступен") }
+        hotKey = HotKey { [weak self] in self?.hotKeyFired() }
 
-        log(String(format: "[init] button=%@ isVisible=%@ policy=%ld screens=%d",
-                   statusItem.button != nil ? "ok" : "NIL", "\(statusItem.isVisible)",
-                   NSApp.activationPolicy().rawValue, NSScreen.screens.count))
+        if sensor == nil { readout.message("⚠️ датчик света недоступен") }
 
         lastTick = Date()
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -73,12 +73,8 @@ final class MenuBarController: NSObject {
         }
         menu.addItem(loginToggle)
 
-        dockToggle.target = self
-        dockToggle.action = #selector(toggleDock)
-        menu.addItem(dockToggle)
-
         menuBarToggle.target = self
-        menuBarToggle.action = #selector(toggleMenuBar)
+        menuBarToggle.action = #selector(hideIcon)
         menu.addItem(menuBarToggle)
 
         menu.addItem(.separator())
@@ -99,8 +95,6 @@ final class MenuBarController: NSObject {
         header.set(on: isEnabled)
         strength.set(settings.intensityPercent)
         loginToggle.state = LoginItem.isEnabled ? .on : .off
-        dockToggle.state = settings.showInDock ? .on : .off
-        menuBarToggle.state = settings.showInMenuBar ? .on : .off
 
         statusItem.isVisible = settings.showInMenuBar
         if let b = statusItem.button {
@@ -110,8 +104,7 @@ final class MenuBarController: NSObject {
         }
     }
 
-    /// Drawn menu-bar icon — a half-filled circle. No SF Symbols dependency, so
-    /// it can never silently fail to load.
+    /// Drawn menu-bar icon — a half-filled circle. No SF Symbols dependency.
     private static func icon(enabled: Bool) -> NSImage {
         let img = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
             let r = rect.insetBy(dx: 2.5, dy: 2.5)
@@ -155,22 +148,26 @@ final class MenuBarController: NSObject {
         loginToggle.state = LoginItem.isEnabled ? .on : .off
     }
 
-    @objc private func toggleDock() { setDockVisible(!settings.showInDock) }
-    @objc private func toggleMenuBar() { setMenuBarVisible(!settings.showInMenuBar) }
-
-    private func setDockVisible(_ on: Bool) {
-        if !on && !settings.showInMenuBar { setMenuBarVisible(true) }   // keep an access point
-        settings.showInDock = on
-        NSApp.setActivationPolicy(on ? .regular : .accessory)
-        if on { NSApp.activate(ignoringOtherApps: false) }
-        refreshUI()
+    /// Menu item: hide the icon. The hotkey / `truetone show` brings it back.
+    @objc private func hideIcon() {
+        settings.showInMenuBar = false
+        statusItem.isVisible = false
     }
 
-    private func setMenuBarVisible(_ on: Bool) {
-        if !on && !settings.showInDock { setDockVisible(true) }        // keep an access point
-        settings.showInMenuBar = on
-        statusItem.isVisible = on
-        refreshUI()
+    /// ⌃⌥⌘T — always makes the controls available, whether or not the OS is
+    /// actually drawing the menu-bar item.
+    private func hotKeyFired() {
+        log("hotkey fired")
+        if !settings.showInMenuBar {
+            settings.showInMenuBar = true
+            statusItem.isVisible = true
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        guard let menu = statusItem.menu else { return }
+        // popUp works even when Sequoia has hidden the item from the bar.
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let f = screen?.frame ?? .zero
+        menu.popUp(positioning: nil, at: NSPoint(x: f.maxX - 290, y: f.maxY - 2), in: nil)
     }
 
     @objc private func quit() {
@@ -180,49 +177,6 @@ final class MenuBarController: NSObject {
 
     func shutdown() { display.restore() }
 
-    /// Right-click Dock menu — plain items only (Dock menus can't host custom views).
-    func makeDockMenu() -> NSMenu {
-        let m = NSMenu()
-
-        let onOff = NSMenuItem(title: isEnabled ? "True Tone: вкл" : "True Tone: выкл",
-                               action: #selector(dockToggleEnabled), keyEquivalent: "")
-        onOff.target = self
-        onOff.state = isEnabled ? .on : .off
-        m.addItem(onOff)
-
-        let strengthMenu = NSMenu()
-        for p in [25, 50, 75, 100] {
-            let it = NSMenuItem(title: "\(p) %", action: #selector(dockSetIntensity(_:)), keyEquivalent: "")
-            it.target = self
-            it.tag = p
-            it.state = (settings.intensityPercent == p) ? .on : .off
-            strengthMenu.addItem(it)
-        }
-        let strengthHost = NSMenuItem(title: "Сила", action: nil, keyEquivalent: "")
-        strengthHost.submenu = strengthMenu
-        m.addItem(strengthHost)
-
-        m.addItem(.separator())
-        let mb = NSMenuItem(title: "Показывать в меню-баре", action: #selector(toggleMenuBar), keyEquivalent: "")
-        mb.target = self
-        mb.state = settings.showInMenuBar ? .on : .off
-        m.addItem(mb)
-        let dk = NSMenuItem(title: "Показывать в доке", action: #selector(toggleDock), keyEquivalent: "")
-        dk.target = self
-        dk.state = settings.showInDock ? .on : .off
-        m.addItem(dk)
-
-        return m
-    }
-
-    @objc private func dockToggleEnabled() { setEnabled(!settings.enabled) }
-    @objc private func dockSetIntensity(_ sender: NSMenuItem) {
-        setIntensity(sender.tag)
-        strength.set(sender.tag)
-    }
-
-    /// A killed / Ctrl-C'd process must never leave the monitor tinted. SIGHUP is
-    /// only ignored (so a terminal-launched instance survives the terminal closing).
     private func installSignalHandlers() {
         signal(SIGHUP, SIG_IGN)
         for sig in [SIGINT, SIGTERM] {
@@ -244,12 +198,32 @@ final class MenuBarController: NSObject {
 
     // MARK: loop
 
+    /// Pick up changes made outside the menu (the `truetone` CLI writes to
+    /// UserDefaults); apply within one tick.
+    private func reconcile() {
+        if statusItem.isVisible != settings.showInMenuBar {
+            statusItem.isVisible = settings.showInMenuBar
+        }
+        let changed = settings.enabled != lastSyncedEnabled
+            || settings.showInMenuBar != lastSyncedMenuBar
+            || settings.intensityPercent != lastSyncedPercent
+        if changed {
+            model.intensity = Double(settings.intensityPercent) / 100.0
+            if settings.enabled != lastSyncedEnabled { model.resetToNative() }
+            if !isEnabled { display.restore() }
+            refreshUI()
+            lastSyncedEnabled = settings.enabled
+            lastSyncedMenuBar = settings.showInMenuBar
+            lastSyncedPercent = settings.intensityPercent
+        }
+    }
+
     private func tick() {
         let now = Date()
         let dt = max(now.timeIntervalSince(lastTick), 0.01)
         lastTick = now
 
-        if settings.showInMenuBar && !statusItem.isVisible { statusItem.isVisible = true }  // re-assert vs Sequoia
+        reconcile()
 
         let reading = sensor?.read()
 

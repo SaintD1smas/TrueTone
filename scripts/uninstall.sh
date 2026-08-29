@@ -8,5 +8,6 @@ UID_="$(id -u)"
 launchctl bootout "gui/$UID_/$LABEL" 2>/dev/null || true
 rm -f  "$HOME/Library/LaunchAgents/$LABEL.plist"
 rm -rf "$HOME/Applications/TrueTone.app"
+rm -f  /usr/local/bin/truetone "$HOME/.local/bin/truetone" 2>/dev/null || true
 
 echo "✓ removed. (The app restores display gamma on exit.)"

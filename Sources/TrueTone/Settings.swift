@@ -16,14 +16,8 @@ struct Settings {
         set { d.set(newValue, forKey: "intensityPercent") }
     }
 
-    /// Show a Dock icon (activation policy .regular) in addition to the menu bar.
-    var showInDock: Bool {
-        get { d.object(forKey: "showInDock") as? Bool ?? true }
-        set { d.set(newValue, forKey: "showInDock") }
-    }
-
-    /// Show the menu-bar item. The controller guarantees at least one of
-    /// showInDock / showInMenuBar is always on, so you can't lock yourself out.
+    /// Show the menu-bar item. When hidden, bring it back with the global
+    /// hotkey (⌃⌥⌘T) or the `truetone show` command.
     var showInMenuBar: Bool {
         get { d.object(forKey: "showInMenuBar") as? Bool ?? true }
         set { d.set(newValue, forKey: "showInMenuBar") }

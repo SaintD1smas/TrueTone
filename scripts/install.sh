@@ -45,11 +45,22 @@ cat > "$PLIST" <<EOF
 EOF
 chmod 644 "$PLIST"
 
+echo "› installing 'truetone' command"
+chmod +x scripts/truetone
+if ln -sf "$PWD/scripts/truetone" /usr/local/bin/truetone 2>/dev/null; then
+    echo "  → /usr/local/bin/truetone"
+else
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$PWD/scripts/truetone" "$HOME/.local/bin/truetone"
+    echo "  → ~/.local/bin/truetone   (add ~/.local/bin to PATH if needed)"
+fi
+
 echo "› (re)loading service"
 launchctl bootout   "gui/$UID_/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_" "$PLIST"
 launchctl kickstart -k "gui/$UID_/$LABEL"
 
 echo "✓ TrueTone is running and will start at login."
-echo "  logs:   log stream --predicate 'process == \"TrueTone\"'"
-echo "  remove: scripts/uninstall.sh"
+echo "  hide/show icon:  truetone hide  /  truetone show   (or hotkey ⌃⌥⌘T)"
+echo "  logs:            /tmp/truetone.log"
+echo "  remove:          scripts/uninstall.sh"

@@ -48,6 +48,10 @@ struct WhitePointModel {
     // MARK: adaptation curve
 
     private func targetMired(lux: Double, ambientCCT: Double) -> Double {
+        // Below a few lux the sensor's CCT is unreliable (reads implausibly low).
+        // Don't guess — sit at the native white point.
+        if lux < 4 || ambientCCT < 2500 { return 1_000_000 / nativeCCT }
+
         let ambient = min(max(ambientCCT, 3500), 10_000)
         let luxT = smoothstep(lux, luxLow, luxHigh)
         let frac = min(max(intensity, 0), 1) * (baseFrac + (1 - baseFrac) * luxT) * maxAdapt
