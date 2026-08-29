@@ -17,7 +17,7 @@ func render(_ px: Int) -> NSBitmapImageRep {
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
     let s = CGFloat(px)
-    let inset = s * 0.06
+    let inset = s * 0.098          // Apple macOS grid: 824/1024 body on the canvas
     let rect = CGRect(x: inset, y: inset, width: s - 2 * inset, height: s - 2 * inset)
     let tile = NSBezierPath(roundedRect: rect,
                             xRadius: rect.width * 0.2237, yRadius: rect.width * 0.2237)
@@ -29,7 +29,7 @@ func render(_ px: Int) -> NSBitmapImageRep {
         .draw(in: rect, angle: -55)
 
     // the mark: a circle split cool | warm
-    let d = rect.width * 0.60
+    let d = rect.width * 0.56
     let c = CGPoint(x: rect.midX, y: rect.midY)
     let box = CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d)
 
