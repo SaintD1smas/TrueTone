@@ -23,6 +23,7 @@ final class MenuBarController: NSObject {
     private let strength = StrengthView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let dockToggle = NSMenuItem(title: "Показывать в доке", action: nil, keyEquivalent: "")
+    private let menuBarToggle = NSMenuItem(title: "Показывать в меню-баре", action: nil, keyEquivalent: "")
 
     override init() {
         super.init()
@@ -76,6 +77,10 @@ final class MenuBarController: NSObject {
         dockToggle.action = #selector(toggleDock)
         menu.addItem(dockToggle)
 
+        menuBarToggle.target = self
+        menuBarToggle.action = #selector(toggleMenuBar)
+        menu.addItem(menuBarToggle)
+
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Выйти", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -95,8 +100,9 @@ final class MenuBarController: NSObject {
         strength.set(settings.intensityPercent)
         loginToggle.state = LoginItem.isEnabled ? .on : .off
         dockToggle.state = settings.showInDock ? .on : .off
+        menuBarToggle.state = settings.showInMenuBar ? .on : .off
 
-        statusItem.isVisible = true
+        statusItem.isVisible = settings.showInMenuBar
         if let b = statusItem.button {
             b.image = Self.icon(enabled: isEnabled)
             b.imagePosition = .imageOnly
@@ -150,11 +156,20 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func toggleDock() { setDockVisible(!settings.showInDock) }
+    @objc private func toggleMenuBar() { setMenuBarVisible(!settings.showInMenuBar) }
 
     private func setDockVisible(_ on: Bool) {
+        if !on && !settings.showInMenuBar { setMenuBarVisible(true) }   // keep an access point
         settings.showInDock = on
         NSApp.setActivationPolicy(on ? .regular : .accessory)
         if on { NSApp.activate(ignoringOtherApps: false) }
+        refreshUI()
+    }
+
+    private func setMenuBarVisible(_ on: Bool) {
+        if !on && !settings.showInDock { setDockVisible(true) }        // keep an access point
+        settings.showInMenuBar = on
+        statusItem.isVisible = on
         refreshUI()
     }
 
@@ -188,9 +203,14 @@ final class MenuBarController: NSObject {
         m.addItem(strengthHost)
 
         m.addItem(.separator())
-        let hide = NSMenuItem(title: "Скрыть из дока", action: #selector(dockHide), keyEquivalent: "")
-        hide.target = self
-        m.addItem(hide)
+        let mb = NSMenuItem(title: "Показывать в меню-баре", action: #selector(toggleMenuBar), keyEquivalent: "")
+        mb.target = self
+        mb.state = settings.showInMenuBar ? .on : .off
+        m.addItem(mb)
+        let dk = NSMenuItem(title: "Показывать в доке", action: #selector(toggleDock), keyEquivalent: "")
+        dk.target = self
+        dk.state = settings.showInDock ? .on : .off
+        m.addItem(dk)
 
         return m
     }
@@ -200,7 +220,6 @@ final class MenuBarController: NSObject {
         setIntensity(sender.tag)
         strength.set(sender.tag)
     }
-    @objc private func dockHide() { setDockVisible(false) }
 
     /// A killed / Ctrl-C'd process must never leave the monitor tinted. SIGHUP is
     /// only ignored (so a terminal-launched instance survives the terminal closing).
@@ -230,7 +249,7 @@ final class MenuBarController: NSObject {
         let dt = max(now.timeIntervalSince(lastTick), 0.01)
         lastTick = now
 
-        if statusItem.isVisible == false { statusItem.isVisible = true }   // re-assert vs Sequoia
+        if settings.showInMenuBar && !statusItem.isVisible { statusItem.isVisible = true }  // re-assert vs Sequoia
 
         let reading = sensor?.read()
 

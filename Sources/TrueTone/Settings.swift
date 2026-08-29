@@ -17,10 +17,15 @@ struct Settings {
     }
 
     /// Show a Dock icon (activation policy .regular) in addition to the menu bar.
-    /// Default on — a reliable access point given Sequoia keeps hiding the
-    /// menu-bar item on this machine; turn it off from the menu.
     var showInDock: Bool {
         get { d.object(forKey: "showInDock") as? Bool ?? true }
         set { d.set(newValue, forKey: "showInDock") }
+    }
+
+    /// Show the menu-bar item. The controller guarantees at least one of
+    /// showInDock / showInMenuBar is always on, so you can't lock yourself out.
+    var showInMenuBar: Bool {
+        get { d.object(forKey: "showInMenuBar") as? Bool ?? true }
+        set { d.set(newValue, forKey: "showInMenuBar") }
     }
 }
