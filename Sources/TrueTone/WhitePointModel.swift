@@ -6,15 +6,17 @@ import Foundation
 /// time-smoothed so the screen never visibly jumps.
 struct WhitePointModel {
 
-    // Tunables (safe defaults; Intensity in the menu scales `maxAdapt`).
+    // Tunables. Defaults chosen so 100 % "Сила" is a clearly visible True-Tone-ish
+    // shift that the menu slider dials *down* from; tune the rest by eye.
     var nativeCCT: Double = 6500          // display native white (D65)
-    var maxAdapt: Double = 0.70          // never adapt more than this fraction of the way
-    var intensity: Double = 1.0          // 0…1 from the menu
-    var floorCCT: Double = 4000          // clamp target — never go orange
-    var ceilCCT: Double = 7200
-    var luxLow: Double = 12               // below this: minimal adaptation
-    var luxHigh: Double = 320             // at/above this: full adaptation
-    var tau: Double = 8.0                 // smoothing time constant, seconds
+    var maxAdapt: Double = 0.85          // never adapt more than this fraction of the way
+    var intensity: Double = 1.0          // 0…1 from the menu slider
+    var baseFrac: Double = 0.22          // adaptation even in a dim room
+    var floorCCT: Double = 3900          // clamp target — never go orange
+    var ceilCCT: Double = 7000
+    var luxLow: Double = 8                // below this: only baseFrac
+    var luxHigh: Double = 300             // at/above this: full lux term
+    var tau: Double = 6.0                 // smoothing time constant, seconds
     var deadbandMired: Double = 1.5       // ignore sub-threshold wobble
 
     /// Smoothed state, in mired (10^6 / Kelvin). nil until first update.
@@ -48,7 +50,7 @@ struct WhitePointModel {
     private func targetMired(lux: Double, ambientCCT: Double) -> Double {
         let ambient = min(max(ambientCCT, 3500), 10_000)
         let luxT = smoothstep(lux, luxLow, luxHigh)
-        let frac = min(max(intensity, 0), 1) * (0.15 + 0.85 * luxT) * maxAdapt
+        let frac = min(max(intensity, 0), 1) * (baseFrac + (1 - baseFrac) * luxT) * maxAdapt
 
         let mNative = 1_000_000 / nativeCCT
         let mAmbient = 1_000_000 / ambient

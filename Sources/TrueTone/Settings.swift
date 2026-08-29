@@ -6,7 +6,7 @@ struct Settings {
     private let d = UserDefaults.standard
 
     var enabled: Bool {
-        get { d.object(forKey: "enabled") as? Bool ?? false }
+        get { d.object(forKey: "enabled") as? Bool ?? true }   // on by default
         set { d.set(newValue, forKey: "enabled") }
     }
 

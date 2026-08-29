@@ -22,7 +22,7 @@ final class MenuBarController: NSObject {
 
     private let readoutItem = NSMenuItem(title: "…", action: nil, keyEquivalent: "")
     private let toggleItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private var intensityItems: [NSMenuItem] = []
+    private let strengthSlider = StrengthSliderView()
 
     override init() {
         super.init()
@@ -32,6 +32,10 @@ final class MenuBarController: NSObject {
         installSignalHandlers()
 
         if sensor == nil { readoutItem.title = "⚠️ датчик света недоступен" }
+
+        log(String(format: "[init] button=%@ isVisible=%@ length=%.1f policy=%ld screens=%d",
+                   statusItem.button != nil ? "ok" : "NIL", "\(statusItem.isVisible)",
+                   statusItem.length, NSApp.activationPolicy().rawValue, NSScreen.screens.count))
 
         lastTick = Date()
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -55,17 +59,11 @@ final class MenuBarController: NSObject {
         readoutItem.isEnabled = false
         menu.addItem(readoutItem)
 
-        let intensity = NSMenu()
-        for p in [25, 50, 75, 100] {
-            let it = NSMenuItem(title: "\(p)%", action: #selector(setIntensity(_:)), keyEquivalent: "")
-            it.target = self
-            it.tag = p
-            intensity.addItem(it)
-            intensityItems.append(it)
-        }
-        let intensityHost = NSMenuItem(title: "Интенсивность", action: nil, keyEquivalent: "")
-        intensityHost.submenu = intensity
-        menu.addItem(intensityHost)
+        strengthSlider.set(settings.intensityPercent)
+        strengthSlider.onChange = { [weak self] pct in self?.setIntensity(pct) }
+        let strengthHost = NSMenuItem()
+        strengthHost.view = strengthSlider
+        menu.addItem(strengthHost)
 
         menu.addItem(.separator())
         let sweep = NSMenuItem(title: "Тест: развёртка 10 с", action: #selector(startSweep), keyEquivalent: "")
@@ -85,12 +83,37 @@ final class MenuBarController: NSObject {
             ? "True Tone для внешнего монитора: вкл"
             : "True Tone для внешнего монитора: выкл"
         toggleItem.state = isEnabled ? .on : .off
-        for it in intensityItems { it.state = (it.tag == settings.intensityPercent) ? .on : .off }
 
-        let name = isEnabled ? "sun.max.fill" : "sun.max"
-        let img = NSImage(systemSymbolName: name, accessibilityDescription: "True Tone")
-        img?.isTemplate = true
-        statusItem.button?.image = img
+        statusItem.isVisible = true
+        if let b = statusItem.button {
+            b.image = Self.icon(enabled: isEnabled)
+            b.imagePosition = .imageOnly
+            b.toolTip = "TrueTone"
+        }
+    }
+
+    /// Drawn menu-bar icon — a half-filled circle. No SF Symbols dependency, so
+    /// it can never silently fail to load and leave the status item invisible.
+    private static func icon(enabled: Bool) -> NSImage {
+        let img = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+            let r = rect.insetBy(dx: 2.5, dy: 2.5)
+            let ring = NSBezierPath(ovalIn: r)
+            ring.lineWidth = 1.4
+            NSColor.black.setStroke()
+            ring.stroke()
+            if enabled {
+                let half = NSBezierPath()
+                let c = NSPoint(x: r.midX, y: r.midY)
+                half.move(to: c)
+                half.appendArc(withCenter: c, radius: r.width / 2, startAngle: 90, endAngle: 270)
+                half.close()
+                NSColor.black.setFill()
+                half.fill()
+            }
+            return true
+        }
+        img.isTemplate = true
+        return img
     }
 
     // MARK: actions
@@ -103,10 +126,9 @@ final class MenuBarController: NSObject {
         tick()
     }
 
-    @objc private func setIntensity(_ sender: NSMenuItem) {
-        settings.intensityPercent = sender.tag
-        model.intensity = Double(sender.tag) / 100.0
-        refreshToggleUI()
+    private func setIntensity(_ pct: Int) {
+        settings.intensityPercent = pct
+        model.intensity = Double(pct) / 100.0
         tick()
     }
 
@@ -117,8 +139,16 @@ final class MenuBarController: NSObject {
         NSApp.terminate(nil)
     }
 
-    /// Make sure a killed / Ctrl-C'd process never leaves the monitor tinted.
+    /// Called from applicationWillTerminate — make sure gamma is back to normal
+    /// whatever the termination path.
+    func shutdown() {
+        display.restore()
+    }
+
+    /// A killed / Ctrl-C'd process must never leave the monitor tinted. SIGHUP is
+    /// only ignored (so a terminal-launched instance survives the terminal closing).
     private func installSignalHandlers() {
+        signal(SIGHUP, SIG_IGN)
         for sig in [SIGINT, SIGTERM] {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
@@ -185,7 +215,7 @@ final class MenuBarController: NSObject {
 
         if debug {
             let rb = display.readbackTopGains()
-            log(String(format: "on   %4.0flx  ambient %5.0fK  ch=%@  ->  screen %5.0fK  gains r=%.3f g=%.3f b=%.3f  gamma-readback %@",
+            log(String(format: "on   %4.0flx  ambient %5.0fK  ch=%@  ->  screen %5.0fK  gains r=%.3f g=%.3f b=%.3f  readback %@",
                        rd.lux, rd.cct,
                        rd.channels.map { String(Int($0)) }.joined(separator: "/"),
                        model.displayCCT, g.r, g.g, g.b,
@@ -194,4 +224,38 @@ final class MenuBarController: NSObject {
     }
 
     private func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
+}
+
+// MARK: - strength slider (custom menu view)
+
+@MainActor
+final class StrengthSliderView: NSView {
+    private let slider = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    private let label = NSTextField(labelWithString: "Сила: 100 %")
+    var onChange: ((Int) -> Void)?
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 46))
+        label.font = .menuFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.frame = NSRect(x: 14, y: 25, width: 212, height: 16)
+        slider.frame = NSRect(x: 14, y: 6, width: 212, height: 18)
+        slider.target = self
+        slider.action = #selector(changed)
+        slider.isContinuous = true
+        addSubview(label)
+        addSubview(slider)
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func set(_ pct: Int) {
+        slider.doubleValue = Double(pct)
+        label.stringValue = "Сила: \(pct) %"
+    }
+
+    @objc private func changed() {
+        let v = Int(slider.doubleValue.rounded())
+        label.stringValue = "Сила: \(v) %"
+        onChange?(v)
+    }
 }
