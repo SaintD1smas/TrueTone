@@ -74,28 +74,47 @@ tables on the Mi.
 
 ---
 
-## Running it
+## Install (runs at login)
 
 ```
-swift build
-./.build/debug/TrueTone        # menu-bar icon (sun), no Dock icon, no window
+scripts/install.sh      # build release → ~/Applications/TrueTone.app → LaunchAgent
+scripts/uninstall.sh    # stop + remove everything
 ```
 
-Menu: on/off · Интенсивность (25/50/75/100 %) · live readout · 10 s test sweep · Выйти.
-Settings persist in `~/Library/Preferences/TrueTone.plist`. On quit / SIGTERM /
-SIGINT the calibrated gamma is restored, so a killed process never leaves the
-Mi tinted.
+`install.sh` registers `~/Library/LaunchAgents/com.dmitriy.truetone.plist`
+(`RunAtLoad`, `KeepAlive` only on crash). Prefs live in
+`~/Library/Preferences/com.dmitriy.truetone.plist`; `enabled` defaults to **on**.
+On quit / SIGTERM / SIGINT the calibrated gamma is restored — a killed process
+never leaves the Mi tinted. Errors go to `/tmp/truetone.log`.
 
-Env for debugging: `TRUETONE_DEBUG=1` (per-tick log to stderr),
-`TRUETONE_FORCE_ON=1` (start enabled without touching prefs).
+Quick run without installing: `swift build && ./.build/debug/TrueTone`.
+Env: `TRUETONE_DEBUG=1` (per-tick stderr log), `TRUETONE_FORCE_ON=1` (start on).
 
-**Verified 2026-08-29:** enabled → Mi gamma top entry goes `R 1.000 / G 0.936 /
-B 0.840` (warm), gamma-readback matches the computed gains, ambient `~4900 K @
-150 lx` → screen driven to `~5820 K`; quit restores identity gamma.
+Menu: on/off · **Сила** slider (0–100 %) · live readout · 10 s test sweep · Выйти.
 
-Not yet: `.app` bundle + launch-at-login (needs a bundle id for `SMAppService`,
-or a `LaunchAgent` plist); adaptation curve is a sane first guess, tune with
-`swift run ttprobe --watch 30` under changing light.
+**Verified 2026-08-29:** enabled → Mi gamma top entry `R 1.000 / G 0.91 / B 0.78`
+(≈5560 K screen) at ambient `~4900 K @ 150 lx`; gamma-readback matches; SIGTERM
+restores identity.
+
+### Menu-bar icon note
+
+On the dev machine, macOS Sequoia has hidden **every** third-party menu-bar item
+(`defaults read com.apple.controlcenter` → `NSStatusItem Visible Item-* = 0`), not
+just this app's. The status item is created correctly (`button ok, isVisible
+true`); macOS just isn't drawing it. Bring hidden items back with:
+
+```
+for i in $(seq 0 15); do defaults write com.apple.controlcenter "NSStatusItem Visible Item-$i" -bool true; done
+killall ControlCenter
+```
+
+A menu-bar manager (e.g. Ice) is the durable fix if Sequoia keeps re-hiding them.
+
+### Tuning the curve
+
+`WhitePointModel` tunables: `maxAdapt 0.85`, `baseFrac 0.22`, `floor 3900 K`,
+`tau 6 s`. Compare the Mi against the built-in (which runs real True Tone) and
+adjust, or watch raw sensor fields with `swift run ttprobe --watch 30`.
 
 ## App design (v1)
 
