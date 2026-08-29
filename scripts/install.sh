@@ -56,8 +56,13 @@ else
 fi
 
 echo "› (re)loading service"
-launchctl bootout   "gui/$UID_/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$UID_" "$PLIST"
+launchctl bootout "gui/$UID_/$LABEL" 2>/dev/null || true
+pkill -x TrueTone 2>/dev/null || true
+sleep 1
+if ! launchctl bootstrap "gui/$UID_" "$PLIST" 2>/dev/null; then
+    # already registered / transitioning — just (re)start it
+    launchctl enable "gui/$UID_/$LABEL" 2>/dev/null || true
+fi
 launchctl kickstart -k "gui/$UID_/$LABEL"
 
 echo "✓ TrueTone is running and will start at login."

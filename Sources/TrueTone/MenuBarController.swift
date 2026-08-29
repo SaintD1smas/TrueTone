@@ -23,7 +23,7 @@ final class MenuBarController: NSObject {
     private let readout = ReadoutView()
     private let strength = StrengthView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
-    private let menuBarToggle = NSMenuItem(title: "Скрыть иконку (⌃⌥⌘T вернёт)", action: nil, keyEquivalent: "")
+    private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     private var lastSyncedEnabled = false
     private var lastSyncedMenuBar = true
@@ -38,7 +38,12 @@ final class MenuBarController: NSObject {
         refreshUI()
         installSignalHandlers()
 
-        hotKey = HotKey { [weak self] in self?.hotKeyFired() }
+        hotKey = HotKey { [weak self] in self?.revealMenu() }
+
+        // A second launch of the app posts this; we bring the menu up.
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(handleRevealNotification),
+            name: .init("com.dmitriy.truetone.reveal"), object: nil)
 
         if sensor == nil { readout.message("⚠️ датчик света недоступен") }
 
@@ -75,6 +80,7 @@ final class MenuBarController: NSObject {
 
         menuBarToggle.target = self
         menuBarToggle.action = #selector(hideIcon)
+        menuBarToggle.toolTip = "Вернуть: открыть TrueTone в Finder / Launchpad, или ⌃⌥⌘T"
         menu.addItem(menuBarToggle)
 
         menu.addItem(.separator())
@@ -154,21 +160,29 @@ final class MenuBarController: NSObject {
         statusItem.isVisible = false
     }
 
-    /// ⌃⌥⌘T — always makes the controls available, whether or not the OS is
-    /// actually drawing the menu-bar item.
-    private func hotKeyFired() {
-        log("hotkey fired")
-        if !settings.showInMenuBar {
-            settings.showInMenuBar = true
-            statusItem.isVisible = true
-        }
+    /// Bring the icon back (if hidden) and open the menu. Used by the ⌃⌥⌘T hotkey
+    /// and by re-opening the app from Finder / Launchpad.
+    func revealMenu() {
+        settings.showInMenuBar = true
+        lastSyncedMenuBar = true
+        statusItem.isVisible = true
+        refreshUI()
         NSApp.activate(ignoringOtherApps: true)
-        guard let menu = statusItem.menu else { return }
-        // popUp works even when Sequoia has hidden the item from the bar.
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let f = screen?.frame ?? .zero
-        menu.popUp(positioning: nil, at: NSPoint(x: f.maxX - 290, y: f.maxY - 2), in: nil)
+
+        // Give the status bar a beat to lay the item out, then click it so the
+        // menu anchors under the real icon.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let button = self.statusItem.button, button.window != nil {
+                button.performClick(nil)
+            } else if let menu = self.statusItem.menu,
+                      let vf = NSScreen.main?.visibleFrame {
+                menu.popUp(positioning: nil, at: NSPoint(x: vf.maxX - 24, y: vf.maxY - 6), in: nil)
+            }
+        }
     }
+
+    @objc private func handleRevealNotification() { revealMenu() }
 
     @objc private func quit() {
         display.restore()

@@ -12,6 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller = MenuBarController()
     }
 
+    /// Re-opening the app from Finder / Launchpad / Spotlight while it's already
+    /// running: bring the menu-bar icon back and show the menu.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        controller?.revealMenu()
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         controller?.shutdown()
     }
