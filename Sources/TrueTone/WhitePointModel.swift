@@ -6,18 +6,21 @@ import Foundation
 /// time-smoothed so the screen never visibly jumps.
 struct WhitePointModel {
 
-    // Tunables. Defaults chosen so 100 % "Сила" is a clearly visible True-Tone-ish
-    // shift that the menu slider dials *down* from; tune the rest by eye.
+    // Tunables. Apple's True Tone is subtle: it moves the white point only a
+    // fraction of the way toward the ambient colour, and reaches full strength
+    // only in bright (outdoor-ish) light. These defaults mirror that; "Сила"
+    // scales it further down.
     var nativeCCT: Double = 6500          // display native white (D65)
-    var maxAdapt: Double = 0.85          // never adapt more than this fraction of the way
+    var maxAdapt: Double = 0.45          // at most ~45 % of the way toward ambient
     var intensity: Double = 1.0          // 0…1 from the menu slider
-    var baseFrac: Double = 0.22          // adaptation even in a dim room
-    var floorCCT: Double = 3900          // clamp target — never go orange
-    var ceilCCT: Double = 7000
-    var luxLow: Double = 8                // below this: only baseFrac
-    var luxHigh: Double = 300             // at/above this: full lux term
+    var baseFrac: Double = 0.10          // minimal pull in dim light
+    var floorCCT: Double = 4300          // clamp target — never go orange
+    var ceilCCT: Double = 6900
+    var luxLow: Double = 5                // below this: only baseFrac
+    var luxHigh: Double = 800             // full lux term only in bright light
     var tau: Double = 6.0                 // smoothing time constant, seconds
     var deadbandMired: Double = 1.5       // ignore sub-threshold wobble
+    var trimK: Double = 0                 // manual bias on the final target (Kelvin)
 
     /// Smoothed state, in mired (10^6 / Kelvin). nil until first update.
     private(set) var currentMired: Double?
@@ -58,12 +61,12 @@ struct WhitePointModel {
 
         let mNative = 1_000_000 / nativeCCT
         let mAmbient = 1_000_000 / ambient
-        var m = mNative + frac * (mAmbient - mNative)
+        let m = mNative + frac * (mAmbient - mNative)
 
-        // clamp in Kelvin, back to mired
-        let k = min(max(1_000_000 / m, floorCCT), ceilCCT)
-        m = 1_000_000 / k
-        return m
+        // auto clamp, then the manual trim (which may push a bit past it)
+        var k = min(max(1_000_000 / m, floorCCT), ceilCCT)
+        k = min(max(k + trimK, 3500), 7500)
+        return 1_000_000 / k
     }
 
     private func smoothstep(_ x: Double, _ a: Double, _ b: Double) -> Double {

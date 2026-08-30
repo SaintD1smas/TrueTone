@@ -16,6 +16,12 @@ struct Settings {
         set { d.set(newValue, forKey: "intensityPercent") }
     }
 
+    /// Manual white-point bias in Kelvin, −1000…+1000 (negative = warmer).
+    var trimK: Int {
+        get { d.object(forKey: "trimK") as? Int ?? 0 }
+        set { d.set(newValue, forKey: "trimK") }
+    }
+
     /// Show the menu-bar item. When hidden, bring it back with the global
     /// hotkey (⌃⌥⌘T) or the `truetone show` command.
     var showInMenuBar: Bool {

@@ -101,3 +101,43 @@ final class StrengthView: NSView {
         onChange?(v)
     }
 }
+
+/// "Подстройка" — a manual warmer/cooler bias to match another display by eye.
+@MainActor
+final class TrimView: NSView {
+    private let caption = NSTextField(labelWithString: "Подстройка")
+    private let value = NSTextField(labelWithString: "0")
+    private let slider = NSSlider(value: 0, minValue: -1000, maxValue: 1000, target: nil, action: nil)
+    var onChange: ((Int) -> Void)?
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: kMenuWidth, height: 52))
+        caption.font = .systemFont(ofSize: 12)
+        caption.frame = NSRect(x: 16, y: 30, width: 120, height: 16)
+        value.font = .systemFont(ofSize: 12)
+        value.textColor = .secondaryLabelColor
+        value.alignment = .right
+        value.frame = NSRect(x: kMenuWidth - 16 - 90, y: 30, width: 90, height: 16)
+        slider.frame = NSRect(x: 14, y: 6, width: kMenuWidth - 28, height: 20)
+        slider.numberOfTickMarks = 5
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(changed)
+        addSubview(caption); addSubview(value); addSubview(slider)
+    }
+    required init?(coder: NSCoder) { nil }
+
+    private func label(_ k: Int) -> String {
+        if k == 0 { return "0" }
+        return k < 0 ? "теплее \(-k)" : "холоднее \(k)"
+    }
+    func set(_ k: Int) {
+        slider.doubleValue = Double(k)
+        value.stringValue = label(k)
+    }
+    @objc private func changed() {
+        let v = (Int(slider.doubleValue.rounded()) / 50) * 50   // snap to 50 K
+        value.stringValue = label(v)
+        onChange?(v)
+    }
+}

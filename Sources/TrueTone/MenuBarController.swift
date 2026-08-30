@@ -22,16 +22,19 @@ final class MenuBarController: NSObject {
     private let header = HeaderView()
     private let readout = ReadoutView()
     private let strength = StrengthView()
+    private let trim = TrimView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     private var lastSyncedEnabled = false
     private var lastSyncedMenuBar = true
     private var lastSyncedPercent = -1
+    private var lastSyncedTrim = 0
 
     override init() {
         super.init()
         model.intensity = Double(settings.intensityPercent) / 100.0
+        model.trimK = Double(settings.trimK)
         // Stable identity so macOS tracks this item's visibility by name.
         statusItem.autosaveName = "com.dmitriy.truetone.status"
         buildMenu()
@@ -63,11 +66,13 @@ final class MenuBarController: NSObject {
 
         header.onToggle = { [weak self] on in self?.setEnabled(on) }
         strength.onChange = { [weak self] pct in self?.setIntensity(pct) }
+        trim.onChange = { [weak self] k in self?.setTrim(k) }
 
         menu.addItem(hosting(header))
         menu.addItem(.separator())
         menu.addItem(hosting(readout))
         menu.addItem(hosting(strength))
+        menu.addItem(hosting(trim))
         menu.addItem(.separator())
 
         loginToggle.target = self
@@ -100,6 +105,7 @@ final class MenuBarController: NSObject {
     private func refreshUI() {
         header.set(on: isEnabled)
         strength.set(settings.intensityPercent)
+        trim.set(settings.trimK)
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
         statusItem.isVisible = settings.showInMenuBar
@@ -146,6 +152,12 @@ final class MenuBarController: NSObject {
     private func setIntensity(_ pct: Int) {
         settings.intensityPercent = pct
         model.intensity = Double(pct) / 100.0
+        tick()
+    }
+
+    private func setTrim(_ k: Int) {
+        settings.trimK = k
+        model.trimK = Double(k)
         tick()
     }
 
@@ -221,14 +233,17 @@ final class MenuBarController: NSObject {
         let changed = settings.enabled != lastSyncedEnabled
             || settings.showInMenuBar != lastSyncedMenuBar
             || settings.intensityPercent != lastSyncedPercent
+            || settings.trimK != lastSyncedTrim
         if changed {
             model.intensity = Double(settings.intensityPercent) / 100.0
+            model.trimK = Double(settings.trimK)
             if settings.enabled != lastSyncedEnabled { model.resetToNative() }
             if !isEnabled { display.restore() }
             refreshUI()
             lastSyncedEnabled = settings.enabled
             lastSyncedMenuBar = settings.showInMenuBar
             lastSyncedPercent = settings.intensityPercent
+            lastSyncedTrim = settings.trimK
         }
     }
 
