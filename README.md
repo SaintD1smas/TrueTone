@@ -129,9 +129,14 @@ A menu-bar manager (e.g. Ice) is the durable fix if Sequoia keeps re-hiding them
 
 ### Tuning the curve
 
-`WhitePointModel` tunables: `maxAdapt 0.85`, `baseFrac 0.22`, `floor 3900 K`,
-`tau 6 s`. Compare the Mi against the built-in (which runs real True Tone) and
-adjust, or watch raw sensor fields with `swift run ttprobe --watch 30`.
+`WhitePointModel` defaults (deliberately gentle, like Apple): `maxAdapt 0.45`,
+`baseFrac 0.10`, `luxHigh 800` (full strength only in bright light),
+`floor 4300 K`, `tau 6 s`. At ~300 lx / 4200 K ambient this lands the screen
+near ~6000 K, not the ~4400 K the first cut produced.
+
+`Подстройка` in the menu (`Settings.trimK`, ±1000 K, 50 K steps) is a manual
+warmer/cooler bias on the final target — use it to match another display by eye.
+`swift run ttprobe --watch 30` shows raw sensor fields.
 
 ## App design (v1)
 
