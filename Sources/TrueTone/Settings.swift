@@ -31,8 +31,15 @@ struct Settings {
 
     /// How dark the Mi is allowed to go, as a % of signal (floor of the sync).
     var brightnessFloorPercent: Int {
-        get { d.object(forKey: "brightnessFloorPercent") as? Int ?? 30 }
+        get { d.object(forKey: "brightnessFloorPercent") as? Int ?? 15 }
         set { d.set(newValue, forKey: "brightnessFloorPercent") }
+    }
+
+    /// The MacBook brightness (%) at which the Mi is left untouched; it only
+    /// dims when the MacBook goes below this. 0 = auto-set on next sync-enable.
+    var brightnessRefPercent: Int {
+        get { d.object(forKey: "brightnessRefPercent") as? Int ?? 0 }
+        set { d.set(newValue, forKey: "brightnessRefPercent") }
     }
 
     /// Manual Mi brightness (0…100), used when syncBrightness is off. 100 = the

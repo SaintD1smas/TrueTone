@@ -26,6 +26,7 @@ final class MenuBarController: NSObject {
     private let brightnessSlider = BrightnessView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let brightnessToggle = NSMenuItem(title: "Яркость как на MacBook", action: nil, keyEquivalent: "")
+    private let anchorItem = NSMenuItem(title: "Совместить яркость сейчас", action: nil, keyEquivalent: "")
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     private var lastSyncedEnabled = false
@@ -86,6 +87,12 @@ final class MenuBarController: NSObject {
         brightnessToggle.toolTip = "Mi не даёт менять яркость по кабелю — гасим через гамму вслед за клавишами яркости MacBook"
         menu.addItem(brightnessToggle)
 
+        anchorItem.target = self
+        anchorItem.action = #selector(anchorBrightness)
+        anchorItem.indentationLevel = 1
+        anchorItem.toolTip = "Запомнить текущую яркость MacBook как уровень, где Mi не приглушается"
+        menu.addItem(anchorItem)
+
         loginToggle.target = self
         loginToggle.action = #selector(toggleLogin)
         if !LoginItem.isBundled {
@@ -118,6 +125,7 @@ final class MenuBarController: NSObject {
         strength.set(settings.intensityPercent)
         trim.set(settings.trimK)
         brightnessToggle.state = settings.syncBrightness ? .on : .off
+        anchorItem.isHidden = !settings.syncBrightness
         brightnessSlider.setEnabled(!settings.syncBrightness)
         if !settings.syncBrightness { brightnessSlider.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
@@ -177,7 +185,17 @@ final class MenuBarController: NSObject {
 
     @objc private func toggleBrightnessSync() {
         settings.syncBrightness.toggle()
+        settings.brightnessRefPercent = 0        // re-anchor fresh on the next tick
         refreshUI()
+        tick()
+    }
+
+    /// Remember the MacBook's current brightness as the level where the Mi is
+    /// left alone — it only dims when the MacBook goes below this.
+    @objc private func anchorBrightness() {
+        if let bb = BuiltinBrightness.read() {
+            settings.brightnessRefPercent = max(1, Int((bb * 100).rounded()))
+        }
         tick()
     }
 
@@ -295,8 +313,12 @@ final class MenuBarController: NSObject {
         // Brightness factor: follow the MacBook, or the manual "Яркость Mi" slider.
         if settings.syncBrightness {
             let bb = BuiltinBrightness.read() ?? 1.0
+            if settings.brightnessRefPercent == 0 {              // self-anchor on first tick
+                settings.brightnessRefPercent = max(1, Int((bb * 100).rounded()))
+            }
+            let ref = Double(settings.brightnessRefPercent) / 100.0
             let floor = Double(settings.brightnessFloorPercent) / 100.0
-            display.brightness = floor + (1 - floor) * bb
+            display.brightness = min(max(bb / max(ref, 0.05), floor), 1.0)
             brightnessSlider.set(Int((display.brightness * 100).rounded()))   // reflect on the disabled slider
         } else if manualDim {
             display.brightness = 0.10 + 0.90 * Double(settings.manualBrightnessPercent) / 100.0
