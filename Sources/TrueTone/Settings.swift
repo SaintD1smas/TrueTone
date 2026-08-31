@@ -22,6 +22,19 @@ struct Settings {
         set { d.set(newValue, forKey: "trimK") }
     }
 
+    /// Follow the MacBook's brightness (F1/F2) on the external monitor by
+    /// scaling its gamma (the Mi ignores hardware brightness control).
+    var syncBrightness: Bool {
+        get { d.object(forKey: "syncBrightness") as? Bool ?? false }
+        set { d.set(newValue, forKey: "syncBrightness") }
+    }
+
+    /// How dark the Mi is allowed to go, as a % of signal (floor of the sync).
+    var brightnessFloorPercent: Int {
+        get { d.object(forKey: "brightnessFloorPercent") as? Int ?? 30 }
+        set { d.set(newValue, forKey: "brightnessFloorPercent") }
+    }
+
     /// Show the menu-bar item. When hidden, bring it back with the global
     /// hotkey (⌃⌥⌘T) or the `truetone show` command.
     var showInMenuBar: Bool {

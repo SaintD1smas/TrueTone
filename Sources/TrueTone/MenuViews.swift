@@ -53,9 +53,11 @@ final class ReadoutView: NSView {
     }
     required init?(coder: NSCoder) { nil }
 
-    func update(ambientK: Double, screenK: Double, lux: Double, tint: NSColor) {
+    func update(ambientK: Double, screenK: Double, lux: Double, tint: NSColor, bright: Double? = nil) {
         line1.stringValue = String(format: "свет %.0f K   →   экран %.0f K", ambientK, screenK)
-        line2.stringValue = String(format: "%.0f lx", lux)
+        var l2 = String(format: "%.0f lx", lux)
+        if let b = bright { l2 += String(format: "   ·   яркость %.0f %%", b * 100) }
+        line2.stringValue = l2
         swatch.layer?.backgroundColor = tint.cgColor
     }
     func message(_ s: String, tint: NSColor = .white) {

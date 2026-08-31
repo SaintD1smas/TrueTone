@@ -24,12 +24,14 @@ final class MenuBarController: NSObject {
     private let strength = StrengthView()
     private let trim = TrimView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
+    private let brightnessToggle = NSMenuItem(title: "Яркость как на MacBook", action: nil, keyEquivalent: "")
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     private var lastSyncedEnabled = false
     private var lastSyncedMenuBar = true
     private var lastSyncedPercent = -1
     private var lastSyncedTrim = 0
+    private var lastSyncedBright = false
 
     override init() {
         super.init()
@@ -51,7 +53,7 @@ final class MenuBarController: NSObject {
         if sensor == nil { readout.message("⚠️ датчик света недоступен") }
 
         lastTick = Date()
-        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -74,6 +76,11 @@ final class MenuBarController: NSObject {
         menu.addItem(hosting(strength))
         menu.addItem(hosting(trim))
         menu.addItem(.separator())
+
+        brightnessToggle.target = self
+        brightnessToggle.action = #selector(toggleBrightnessSync)
+        brightnessToggle.toolTip = "Mi не даёт менять яркость по кабелю — гасим через гамму вслед за клавишами яркости MacBook"
+        menu.addItem(brightnessToggle)
 
         loginToggle.target = self
         loginToggle.action = #selector(toggleLogin)
@@ -106,6 +113,7 @@ final class MenuBarController: NSObject {
         header.set(on: isEnabled)
         strength.set(settings.intensityPercent)
         trim.set(settings.trimK)
+        brightnessToggle.state = settings.syncBrightness ? .on : .off
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
         statusItem.isVisible = settings.showInMenuBar
@@ -158,6 +166,13 @@ final class MenuBarController: NSObject {
     private func setTrim(_ k: Int) {
         settings.trimK = k
         model.trimK = Double(k)
+        tick()
+    }
+
+    @objc private func toggleBrightnessSync() {
+        settings.syncBrightness.toggle()
+        if !settings.syncBrightness { display.brightness = 1.0 }
+        refreshUI()
         tick()
     }
 
@@ -234,16 +249,18 @@ final class MenuBarController: NSObject {
             || settings.showInMenuBar != lastSyncedMenuBar
             || settings.intensityPercent != lastSyncedPercent
             || settings.trimK != lastSyncedTrim
+            || settings.syncBrightness != lastSyncedBright
         if changed {
             model.intensity = Double(settings.intensityPercent) / 100.0
             model.trimK = Double(settings.trimK)
             if settings.enabled != lastSyncedEnabled { model.resetToNative() }
-            if !isEnabled { display.restore() }
+            if !isEnabled && !settings.syncBrightness { display.restore() }
             refreshUI()
             lastSyncedEnabled = settings.enabled
             lastSyncedMenuBar = settings.showInMenuBar
             lastSyncedPercent = settings.intensityPercent
             lastSyncedTrim = settings.trimK
+            lastSyncedBright = settings.syncBrightness
         }
     }
 
@@ -255,29 +272,47 @@ final class MenuBarController: NSObject {
         reconcile()
 
         let reading = sensor?.read()
+        let ttActive = isEnabled && reading != nil
+        let brightActive = settings.syncBrightness
 
-        guard isEnabled else {
+        // Brightness factor from the MacBook's own brightness (F1/F2).
+        if brightActive {
+            let bb = BuiltinBrightness.read() ?? 1.0
+            let floor = Double(settings.brightnessFloorPercent) / 100.0
+            display.brightness = floor + (1 - floor) * bb
+        } else {
+            display.brightness = 1.0
+        }
+
+        guard ttActive || brightActive else {
             if display.isTinted { display.restore() }
-            if let rd = reading {
-                readout.message(String(format: "выкл · свет %.0f K · %.0f lx", rd.cct, rd.lux))
-            } else {
-                readout.message("выкл")
-            }
+            readout.message(isEnabled && reading == nil
+                ? "⚠️ нет данных с датчика"
+                : (reading.map { String(format: "выкл · свет %.0f K · %.0f lx", $0.cct, $0.lux) } ?? "выкл"))
             return
         }
 
-        guard let rd = reading else {
-            readout.message("⚠️ нет данных с датчика")
-            return
+        var g = (r: 1.0, g: 1.0, b: 1.0)
+        if ttActive, let rd = reading {
+            model.update(lux: rd.lux, ambientCCT: rd.cct, dt: dt)
+            g = model.rgbGains()
         }
-
-        model.update(lux: rd.lux, ambientCCT: rd.cct, dt: dt)
-        let g = model.rgbGains()
         display.apply(r: g.r, g: g.g, b: g.b)
-        readout.update(ambientK: rd.cct, screenK: model.displayCCT, lux: rd.lux,
-                       tint: NSColor(srgbRed: g.r, green: g.g, blue: g.b, alpha: 1))
 
-        log(String(format: "on  %4.0flx ambient %5.0fK -> screen %5.0fK  gains %.3f/%.3f/%.3f",
-                   rd.lux, rd.cct, model.displayCCT, g.r, g.g, g.b))
+        let brightPct = brightActive ? display.brightness : nil
+        if let rd = reading {
+            readout.update(ambientK: rd.cct,
+                           screenK: ttActive ? model.displayCCT : nativeCCT,
+                           lux: rd.lux,
+                           tint: NSColor(srgbRed: g.r, green: g.g, blue: g.b, alpha: 1),
+                           bright: brightPct)
+        } else if let b = brightPct {
+            readout.message(String(format: "яркость %.0f %%", b * 100))
+        }
+
+        log(String(format: "tt=%@ bright=%.2f  gains %.3f/%.3f/%.3f",
+                   ttActive ? "on" : "off", display.brightness, g.r, g.g, g.b))
     }
+
+    private let nativeCCT: Double = 6500
 }

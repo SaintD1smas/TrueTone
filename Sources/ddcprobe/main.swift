@@ -122,3 +122,5 @@ if let (cur, maxV) = ddcCurrent(0x10) {
 } else {
     print("   couldn't read current brightness")
 }
+
+probeBrightnessAPIs()

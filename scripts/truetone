@@ -11,14 +11,24 @@ truetone hide            hide it (this command / ⌃⌥⌘T bring it back)
 truetone toggle          flip icon visibility
 truetone on | off        turn the True Tone effect on / off
 truetone <0-100>         set "Сила" (adaptation strength)
+truetone bright on|off   sync the Mi's brightness to the MacBook keys
 truetone status          print current settings
 EOF
     exit 1
 }
 
-[ $# -eq 1 ] || usage
-
 read_bool() { defaults read "$D" "$1" 2>/dev/null || echo 1; }
+
+if [ "${1:-}" = "bright" ]; then
+    case "${2:-}" in
+        on)  defaults write "$D" syncBrightness -bool true ;;
+        off) defaults write "$D" syncBrightness -bool false ;;
+        *)   usage ;;
+    esac
+    echo "ok"; exit 0
+fi
+
+[ $# -eq 1 ] || usage
 
 case "$1" in
     show)   defaults write "$D" showInMenuBar -bool true ;;
