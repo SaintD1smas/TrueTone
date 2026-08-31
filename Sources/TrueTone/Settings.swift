@@ -35,6 +35,13 @@ struct Settings {
         set { d.set(newValue, forKey: "brightnessFloorPercent") }
     }
 
+    /// Manual Mi brightness (0…100), used when syncBrightness is off. 100 = the
+    /// Mi's own hardware brightness, untouched.
+    var manualBrightnessPercent: Int {
+        get { d.object(forKey: "manualBrightnessPercent") as? Int ?? 100 }
+        set { d.set(newValue, forKey: "manualBrightnessPercent") }
+    }
+
     /// Show the menu-bar item. When hidden, bring it back with the global
     /// hotkey (⌃⌥⌘T) or the `truetone show` command.
     var showInMenuBar: Bool {

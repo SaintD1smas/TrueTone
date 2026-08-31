@@ -104,6 +104,46 @@ final class StrengthView: NSView {
     }
 }
 
+/// "Яркость Mi" — manual brightness for the external monitor (gamma dim).
+@MainActor
+final class BrightnessView: NSView {
+    private let caption = NSTextField(labelWithString: "Яркость Mi")
+    private let value = NSTextField(labelWithString: "100 %")
+    private let slider = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    var onChange: ((Int) -> Void)?
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: kMenuWidth, height: 52))
+        caption.font = .systemFont(ofSize: 12)
+        caption.frame = NSRect(x: 16, y: 30, width: 120, height: 16)
+        value.font = .systemFont(ofSize: 12)
+        value.textColor = .secondaryLabelColor
+        value.alignment = .right
+        value.frame = NSRect(x: kMenuWidth - 16 - 64, y: 30, width: 64, height: 16)
+        slider.frame = NSRect(x: 14, y: 6, width: kMenuWidth - 28, height: 20)
+        slider.numberOfTickMarks = 5
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(changed)
+        addSubview(caption); addSubview(value); addSubview(slider)
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func set(_ pct: Int) {
+        slider.doubleValue = Double(pct)
+        value.stringValue = "\(pct) %"
+    }
+    func setEnabled(_ on: Bool) {
+        slider.isEnabled = on
+        caption.textColor = on ? .labelColor : .tertiaryLabelColor
+    }
+    @objc private func changed() {
+        let v = Int(slider.doubleValue.rounded())
+        value.stringValue = "\(v) %"
+        onChange?(v)
+    }
+}
+
 /// "Подстройка" — a manual warmer/cooler bias to match another display by eye.
 @MainActor
 final class TrimView: NSView {

@@ -23,6 +23,7 @@ final class MenuBarController: NSObject {
     private let readout = ReadoutView()
     private let strength = StrengthView()
     private let trim = TrimView()
+    private let brightnessSlider = BrightnessView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let brightnessToggle = NSMenuItem(title: "Яркость как на MacBook", action: nil, keyEquivalent: "")
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
@@ -32,6 +33,7 @@ final class MenuBarController: NSObject {
     private var lastSyncedPercent = -1
     private var lastSyncedTrim = 0
     private var lastSyncedBright = false
+    private var lastSyncedManual = 100
 
     override init() {
         super.init()
@@ -69,12 +71,14 @@ final class MenuBarController: NSObject {
         header.onToggle = { [weak self] on in self?.setEnabled(on) }
         strength.onChange = { [weak self] pct in self?.setIntensity(pct) }
         trim.onChange = { [weak self] k in self?.setTrim(k) }
+        brightnessSlider.onChange = { [weak self] pct in self?.setManualBrightness(pct) }
 
         menu.addItem(hosting(header))
         menu.addItem(.separator())
         menu.addItem(hosting(readout))
         menu.addItem(hosting(strength))
         menu.addItem(hosting(trim))
+        menu.addItem(hosting(brightnessSlider))
         menu.addItem(.separator())
 
         brightnessToggle.target = self
@@ -114,6 +118,8 @@ final class MenuBarController: NSObject {
         strength.set(settings.intensityPercent)
         trim.set(settings.trimK)
         brightnessToggle.state = settings.syncBrightness ? .on : .off
+        brightnessSlider.setEnabled(!settings.syncBrightness)
+        if !settings.syncBrightness { brightnessSlider.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
         statusItem.isVisible = settings.showInMenuBar
@@ -171,7 +177,14 @@ final class MenuBarController: NSObject {
 
     @objc private func toggleBrightnessSync() {
         settings.syncBrightness.toggle()
-        if !settings.syncBrightness { display.brightness = 1.0 }
+        refreshUI()
+        tick()
+    }
+
+    /// Dragging the manual slider takes over from the MacBook sync.
+    private func setManualBrightness(_ pct: Int) {
+        settings.manualBrightnessPercent = pct
+        if settings.syncBrightness { settings.syncBrightness = false }
         refreshUI()
         tick()
     }
@@ -250,17 +263,20 @@ final class MenuBarController: NSObject {
             || settings.intensityPercent != lastSyncedPercent
             || settings.trimK != lastSyncedTrim
             || settings.syncBrightness != lastSyncedBright
+            || settings.manualBrightnessPercent != lastSyncedManual
         if changed {
             model.intensity = Double(settings.intensityPercent) / 100.0
             model.trimK = Double(settings.trimK)
             if settings.enabled != lastSyncedEnabled { model.resetToNative() }
-            if !isEnabled && !settings.syncBrightness { display.restore() }
+            let brightActive = settings.syncBrightness || settings.manualBrightnessPercent < 100
+            if !isEnabled && !brightActive { display.restore() }
             refreshUI()
             lastSyncedEnabled = settings.enabled
             lastSyncedMenuBar = settings.showInMenuBar
             lastSyncedPercent = settings.intensityPercent
             lastSyncedTrim = settings.trimK
             lastSyncedBright = settings.syncBrightness
+            lastSyncedManual = settings.manualBrightnessPercent
         }
     }
 
@@ -273,13 +289,17 @@ final class MenuBarController: NSObject {
 
         let reading = sensor?.read()
         let ttActive = isEnabled && reading != nil
-        let brightActive = settings.syncBrightness
+        let manualDim = settings.manualBrightnessPercent < 100
+        let brightActive = settings.syncBrightness || manualDim
 
-        // Brightness factor from the MacBook's own brightness (F1/F2).
-        if brightActive {
+        // Brightness factor: follow the MacBook, or the manual "Яркость Mi" slider.
+        if settings.syncBrightness {
             let bb = BuiltinBrightness.read() ?? 1.0
             let floor = Double(settings.brightnessFloorPercent) / 100.0
             display.brightness = floor + (1 - floor) * bb
+            brightnessSlider.set(Int((display.brightness * 100).rounded()))   // reflect on the disabled slider
+        } else if manualDim {
+            display.brightness = 0.10 + 0.90 * Double(settings.manualBrightnessPercent) / 100.0
         } else {
             display.brightness = 1.0
         }
