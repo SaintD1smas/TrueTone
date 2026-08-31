@@ -93,6 +93,16 @@ Env: `TRUETONE_DEBUG=1` (per-tick stderr log), `TRUETONE_FORCE_ON=1` (start on).
 Menu: on/off switch · live readout (+ tint swatch) · **Сила** slider (0–100 %) ·
 Автозапуск при входе · Скрыть иконку · Выйти. Menu-bar only, no Dock icon.
 
+### Brightness sync
+
+`Яркость как на MacBook` in the menu (or `truetone bright on`) makes the Mi's
+brightness follow the built-in display's — i.e. the F1/F2 keys. The Mi refuses
+every hardware brightness path (DDC/CI write, DisplayServices, CoreDisplay), so
+this dims it by scaling its gamma LUT. Trade-offs: it can only go *dimmer* than
+the Mi's own setting (never brighter), mild banding is possible at low levels,
+and there's ~0.5 s lag. `Settings.brightnessFloorPercent` (30) is the darkest it
+will go. `swift run ddcprobe` documents why hardware control isn't available.
+
 ### Hiding / restoring the menu-bar icon
 
 `Скрыть иконку` in the menu hides it. To bring it back (any one of):
