@@ -15,6 +15,11 @@ let package = Package(
             ]
         ),
         .executableTarget(
+            name: "ddcprobe",
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation")]
+        ),
+        .executableTarget(
             name: "ttprobe",
             swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [
