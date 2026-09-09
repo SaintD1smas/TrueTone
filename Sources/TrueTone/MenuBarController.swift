@@ -57,6 +57,7 @@ final class MenuBarController: NSObject {
     private let calibrateItem = NSMenuItem(title: "Совместить сейчас", action: nil, keyEquivalent: "")
     private let calibrationInfo = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let calibrationReset = NSMenuItem(title: "Сбросить калибровку", action: nil, keyEquivalent: "")
+    private let calibrationSeparator = NSMenuItem.separator()
 
     /// How MacBook brightness maps onto the Mi's backlight.
     private var brightnessMap = BrightnessMap()
@@ -66,7 +67,8 @@ final class MenuBarController: NSObject {
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
-    /// The Mi's own luminance before we touched it — restored on quit.
+    /// The Mi's own luminance at launch — seeds the manual slider so the first
+    /// hand-over doesn't jump. Deliberately *not* restored on quit.
     private var originalLuminance: Int?
 
     private var lastSyncedEnabled = false
@@ -150,22 +152,27 @@ final class MenuBarController: NSObject {
         menu.addItem(brightnessToggle)
         menu.addItem(hosting(brightness))
 
+        // Calibration is plumbing you touch once — it doesn't belong in the main
+        // list alongside the everyday switches.
         calibrateItem.target = self
         calibrateItem.action = #selector(calibrateBrightness)
         calibrateItem.toolTip = """
             Выключи «Как на MacBook», подгони ползунком, чтобы экраны совпали, и нажми.
             Повтори на заметно другой яркости MacBook — две точки задают и совпадение, и диапазон.
             """
-        menu.addItem(calibrateItem)
-
-        calibrationInfo.isEnabled = false
-        calibrationInfo.indentationLevel = 1
-        menu.addItem(calibrationInfo)
-
         calibrationReset.target = self
         calibrationReset.action = #selector(resetCalibration)
-        calibrationReset.indentationLevel = 1
-        menu.addItem(calibrationReset)
+        calibrationInfo.isEnabled = false
+
+        let calibrationMenu = NSMenu()
+        calibrationMenu.addItem(calibrateItem)
+        calibrationMenu.addItem(calibrationReset)
+        calibrationMenu.addItem(calibrationSeparator)
+        calibrationMenu.addItem(calibrationInfo)
+
+        let calibrationHost = NSMenuItem(title: "Калибровка", action: nil, keyEquivalent: "")
+        calibrationHost.submenu = calibrationMenu
+        menu.addItem(calibrationHost)
 
         menu.addItem(.sectionHeader(title: "Приложение"))
         loginToggle.target = self
@@ -209,8 +216,10 @@ final class MenuBarController: NSObject {
             ? "Сначала выключи «Как на MacBook» и подгони ползунком"
             : "Запомнить, что сейчас экраны совпадают. Повтори на другой яркости MacBook."
         calibrationInfo.title = brightnessMap.summary
-        calibrationInfo.isHidden = !brightnessMap.isCalibrated
-        calibrationReset.isHidden = !brightnessMap.isCalibrated
+        let calibrated = brightnessMap.isCalibrated
+        calibrationInfo.isHidden = !calibrated
+        calibrationReset.isHidden = !calibrated
+        calibrationSeparator.isHidden = !calibrated
         if !settings.syncBrightness { brightness.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 

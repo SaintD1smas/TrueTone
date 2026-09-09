@@ -1,6 +1,9 @@
 import AppKit
 
 let kMenuWidth: CGFloat = 268
+/// Native menu items indent their text past the checkmark column; custom views
+/// have to match it by hand or they sit visibly further left.
+let kMenuTextInset: CGFloat = 21
 
 /// Top of the menu: app name + an on/off switch.
 @MainActor
@@ -13,14 +16,14 @@ final class HeaderView: NSView {
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: kMenuWidth, height: 52))
         title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.frame = NSRect(x: 16, y: 27, width: 150, height: 18)
+        title.frame = NSRect(x: kMenuTextInset, y: 27, width: 150, height: 18)
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSRect(x: 16, y: 10, width: 170, height: 14)
+        subtitle.frame = NSRect(x: kMenuTextInset, y: 10, width: 170, height: 14)
         toggle.target = self
         toggle.action = #selector(changed)
         toggle.sizeToFit()
-        toggle.frame.origin = NSPoint(x: kMenuWidth - 16 - toggle.frame.width, y: 15)
+        toggle.frame.origin = NSPoint(x: kMenuWidth - kMenuTextInset - toggle.frame.width, y: 15)
         addSubview(title); addSubview(subtitle); addSubview(toggle)
     }
     required init?(coder: NSCoder) { nil }
@@ -39,15 +42,15 @@ final class ScaleView: NSView {
     private var ambient: Double?
     private var screen: Double?
 
-    private let barRect = NSRect(x: 16, y: 34, width: kMenuWidth - 32, height: 8)
+    private let barRect = NSRect(x: kMenuTextInset, y: 34, width: kMenuWidth - 2 * kMenuTextInset, height: 8)
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: kMenuWidth, height: 82))
         caption.font = .systemFont(ofSize: 12)
-        caption.frame = NSRect(x: 16, y: 60, width: kMenuWidth - 32, height: 16)
+        caption.frame = NSRect(x: kMenuTextInset, y: 60, width: kMenuWidth - 2 * kMenuTextInset, height: 16)
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
-        detail.frame = NSRect(x: 16, y: 4, width: kMenuWidth - 32, height: 14)
+        detail.frame = NSRect(x: kMenuTextInset, y: 4, width: kMenuWidth - 2 * kMenuTextInset, height: 14)
         addSubview(caption); addSubview(detail)
     }
     required init?(coder: NSCoder) { nil }
@@ -135,12 +138,12 @@ final class SliderRow: NSView {
 
         let top = h - 20
         caption.font = .systemFont(ofSize: 12)
-        caption.frame = NSRect(x: 16, y: top, width: 150, height: 16)
+        caption.frame = NSRect(x: kMenuTextInset, y: top, width: 150, height: 16)
         value.font = .systemFont(ofSize: 12)
         value.textColor = .secondaryLabelColor
         value.alignment = .right
-        value.frame = NSRect(x: kMenuWidth - 16 - 96, y: top, width: 96, height: 16)
-        slider.frame = NSRect(x: 14, y: top - 26, width: kMenuWidth - 28, height: 20)
+        value.frame = NSRect(x: kMenuWidth - kMenuTextInset - 96, y: top, width: 96, height: 16)
+        slider.frame = NSRect(x: kMenuTextInset - 2, y: top - 26, width: kMenuWidth - 2 * kMenuTextInset + 4, height: 20)
         slider.isContinuous = true
         // A centred control shouldn't grow a bar from the left edge — the knob
         // position carries the value. .clear renders black and the label greys are
@@ -157,7 +160,7 @@ final class SliderRow: NSView {
         if let hintLabel = self.hint {
             hintLabel.font = .systemFont(ofSize: 10)
             hintLabel.textColor = .tertiaryLabelColor
-            hintLabel.frame = NSRect(x: 16, y: 2, width: kMenuWidth - 32, height: 13)
+            hintLabel.frame = NSRect(x: kMenuTextInset, y: 2, width: kMenuWidth - 2 * kMenuTextInset, height: 13)
             addSubview(hintLabel)
         }
     }
