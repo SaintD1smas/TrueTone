@@ -29,6 +29,26 @@ struct Settings {
         set { d.set(newValue, forKey: "syncBrightness") }
     }
 
+    /// Brightness calibration anchors ("these two look the same"), persisted as
+    /// four scalars; a negative builtin value means the anchor is unset.
+    var brightnessMap: BrightnessMap {
+        get {
+            func pair(_ b: String, _ l: String) -> (Double?, Int?) {
+                guard let v = d.object(forKey: b) as? Double, v >= 0 else { return (nil, nil) }
+                return (v, d.integer(forKey: l))
+            }
+            let lo = pair("calLoBuiltin", "calLoLum")
+            let hi = pair("calHiBuiltin", "calHiLum")
+            return BrightnessMap(loBuiltin: lo.0, loLum: lo.1, hiBuiltin: hi.0, hiLum: hi.1)
+        }
+        set {
+            d.set(newValue.loBuiltin ?? -1, forKey: "calLoBuiltin")
+            d.set(newValue.loLum ?? 0, forKey: "calLoLum")
+            d.set(newValue.hiBuiltin ?? -1, forKey: "calHiBuiltin")
+            d.set(newValue.hiLum ?? 0, forKey: "calHiLum")
+        }
+    }
+
     /// Last known health, published so `truetone status` can report it — on this
     /// Mac the menu-bar icon is often hidden, so the terminal is the only surface
     /// left for "why isn't it doing anything".

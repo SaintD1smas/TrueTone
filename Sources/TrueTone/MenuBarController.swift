@@ -49,6 +49,14 @@ final class MenuBarController: NSObject {
     // menu items
     private let problemItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let brightnessToggle = NSMenuItem(title: "Как на MacBook", action: nil, keyEquivalent: "")
+    private let calibrateItem = NSMenuItem(title: "Совместить сейчас", action: nil, keyEquivalent: "")
+    private let calibrationInfo = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+
+    /// How MacBook brightness maps onto the Mi's backlight.
+    private var brightnessMap = BrightnessMap()
+    /// Last luminance we asked the panel for — the value calibration records.
+    private var currentMiLum: Int?
+    private var brightnessTimer: Timer?
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
@@ -72,6 +80,7 @@ final class MenuBarController: NSObject {
         super.init()
         model.intensity = Double(settings.intensityPercent) / 100.0
         model.trimK = Double(settings.trimK)
+        brightnessMap = settings.brightnessMap
         display.onDisplaysChanged = { [weak self] in self?.resolvePanel() }
         resolvePanel()
 
@@ -91,6 +100,16 @@ final class MenuBarController: NSObject {
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+
+        // Brightness needs a faster loop than the colour path: at 0.5 s the Mi
+        // visibly trailed the brightness keys. This only reads the built-in level
+        // (cheap, no DDC) and lets DDCBrightness rate-limit the writes.
+        let bt = Timer(timeInterval: 0.12, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateBrightness() }
+        }
+        RunLoop.main.add(bt, forMode: .common)
+        brightnessTimer = bt
+
         tick()
     }
 
@@ -124,6 +143,18 @@ final class MenuBarController: NSObject {
         brightnessToggle.toolTip = "Подсветка Mi едет за клавишами яркости MacBook (по DDC)"
         menu.addItem(brightnessToggle)
         menu.addItem(hosting(brightness))
+
+        calibrateItem.target = self
+        calibrateItem.action = #selector(calibrateBrightness)
+        calibrateItem.toolTip = """
+            Выключи «Как на MacBook», подгони ползунком, чтобы экраны совпали, и нажми.
+            Повтори на заметно другой яркости MacBook — две точки задают и совпадение, и диапазон.
+            """
+        menu.addItem(calibrateItem)
+
+        calibrationInfo.isEnabled = false
+        calibrationInfo.indentationLevel = 1
+        menu.addItem(calibrationInfo)
 
         menu.addItem(.sectionHeader(title: "Приложение"))
         loginToggle.target = self
@@ -160,6 +191,9 @@ final class MenuBarController: NSObject {
         brightnessToggle.state = settings.syncBrightness ? .on : .off
         brightnessToggle.isEnabled = DDCBrightness.isAvailable
         brightness.setEnabled(!settings.syncBrightness && DDCBrightness.isAvailable)
+        calibrateItem.isEnabled = DDCBrightness.isAvailable
+        calibrationInfo.title = brightnessMap.summary
+        calibrationInfo.isHidden = !brightnessMap.isCalibrated
         if !settings.syncBrightness { brightness.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
@@ -271,6 +305,17 @@ final class MenuBarController: NSObject {
         tick()
     }
 
+    /// Record "the screens match right now". Two such points, taken at clearly
+    /// different MacBook levels, define both the offset and the slope — which is
+    /// why there are no separate min/max controls.
+    @objc private func calibrateBrightness() {
+        guard let bb = BuiltinBrightness.read(), let lum = currentMiLum else { return }
+        brightnessMap.record(builtin: bb, luminance: lum)
+        settings.brightnessMap = brightnessMap
+        refreshUI()
+        log("[calib] \(brightnessMap.summary)")
+    }
+
     /// Dragging the manual slider takes over from the MacBook sync.
     private func setManualBrightness(_ pct: Int) {
         settings.manualBrightnessPercent = pct
@@ -377,6 +422,25 @@ final class MenuBarController: NSObject {
         return ids.contains { CGDisplayIsBuiltin($0) == 0 }
     }
 
+    /// Drive the Mi's backlight. Runs on its own fast timer so the panel keeps up
+    /// with the brightness keys; DDCBrightness coalesces the actual writes.
+    private func updateBrightness() {
+        if settings.syncBrightness {
+            guard let bb = BuiltinBrightness.read() else { return }
+            let target = brightnessMap.luminance(forBuiltin: bb)
+            DDCBrightness.set(target)
+            if currentMiLum != target {
+                brightness.set(target)          // mirror on the disabled slider
+                log(String(format: "[bright] bb=%.3f -> %d (%@)", bb, target, brightnessMap.summary))
+            }
+            currentMiLum = target
+        } else {
+            let target = settings.manualBrightnessPercent
+            DDCBrightness.set(target)
+            currentMiLum = target
+        }
+    }
+
     private func tick() {
         let now = Date()
         let dt = max(now.timeIntervalSince(lastTick), 0.01)
@@ -407,18 +471,8 @@ final class MenuBarController: NSObject {
 
         let ttActive = isEnabled && reading != nil && hasDisplay
 
-        // --- real backlight over DDC ---
-        var miLuminance: Int?
-        if settings.syncBrightness, let bb = BuiltinBrightness.read() {
-            let target = min(max(Int((bb * 100).rounded()), 5), 100)
-            DDCBrightness.set(target)
-            miLuminance = target
-            brightness.set(target)          // reflect on the disabled slider
-        } else if !settings.syncBrightness {
-            let target = settings.manualBrightnessPercent
-            DDCBrightness.set(target)
-            miLuminance = target
-        }
+        updateBrightness()
+        let miLuminance = currentMiLum
 
         guard ttActive else {
             if display.isTinted { display.restore() }

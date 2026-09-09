@@ -11,7 +11,10 @@ import CoreGraphics
 /// rate-limited and coalesced, and we never read except once at startup.
 enum DDCBrightness {
 
-    private static let minWriteInterval: TimeInterval = 0.5
+    /// Spacing between backlight writes. Kept short enough that holding the
+    /// brightness keys doesn't visibly lag, but this is writes only — never a
+    /// set+get loop, which is what wedged this monitor's MCU before.
+    private static let minWriteInterval: TimeInterval = 0.2
     private static let queue = DispatchQueue(label: "truetone.ddc")
 
     nonisolated(unsafe) private static var lastWritten: Int?
