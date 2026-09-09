@@ -54,10 +54,7 @@ final class MenuBarController: NSObject {
     // menu items
     private let problemItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let brightnessToggle = NSMenuItem(title: "Match MacBook", action: nil, keyEquivalent: "")
-    private let calibrateItem = NSMenuItem(title: "Match now", action: nil, keyEquivalent: "")
-    private let calibrationInfo = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let calibrationReset = NSMenuItem(title: "Reset calibration", action: nil, keyEquivalent: "")
-    private let calibrationSeparator = NSMenuItem.separator()
+    private let calibrationReset = NSMenuItem(title: "Reset brightness match", action: nil, keyEquivalent: "")
 
     /// How MacBook brightness maps onto the Mi's backlight.
     private var brightnessMap = BrightnessMap()
@@ -152,29 +149,9 @@ final class MenuBarController: NSObject {
         menu.addItem(brightnessToggle)
         menu.addItem(hosting(brightness))
 
-        // Calibration is plumbing you touch once — it doesn't belong in the main
-        // list alongside the everyday switches.
-        calibrateItem.target = self
-        calibrateItem.action = #selector(calibrateBrightness)
-        calibrateItem.toolTip = """
-            Turn off "Match MacBook", set the slider until the screens agree, then press this.
-            Repeat at a clearly different MacBook level — two points fix both the match and the range.
-            """
         calibrationReset.target = self
         calibrationReset.action = #selector(resetCalibration)
-        calibrationInfo.isEnabled = false
-
-        // State first, then the actions — the submenu has to stand on its own,
-        // otherwise it collapses to a single greyed row that explains nothing.
-        let calibrationMenu = NSMenu()
-        calibrationMenu.addItem(calibrationInfo)
-        calibrationMenu.addItem(calibrationSeparator)
-        calibrationMenu.addItem(calibrateItem)
-        calibrationMenu.addItem(calibrationReset)
-
-        let calibrationHost = NSMenuItem(title: "Calibration", action: nil, keyEquivalent: "")
-        calibrationHost.submenu = calibrationMenu
-        menu.addItem(calibrationHost)
+        menu.addItem(calibrationReset)
 
         menu.addItem(.sectionHeader(title: "App"))
         loginToggle.target = self
@@ -211,18 +188,8 @@ final class MenuBarController: NSObject {
         brightnessToggle.state = settings.syncBrightness ? .on : .off
         brightnessToggle.isEnabled = DDCBrightness.isAvailable
         brightness.setEnabled(!settings.syncBrightness && DDCBrightness.isAvailable)
-        // Recording an anchor while sync drives the panel would just re-affirm the
-        // current line — and could displace a good anchor. Calibrate with sync off.
-        let calibrated = brightnessMap.isCalibrated
-        calibrateItem.isEnabled = DDCBrightness.isAvailable && !settings.syncBrightness
-        calibrateItem.toolTip =
-            "Remember that the screens agree right now. Repeat at another MacBook level."
-        calibrationInfo.title =
-            !DDCBrightness.isAvailable ? "brightness control unavailable"
-            : settings.syncBrightness ? "turn “Match MacBook” off to calibrate"
-            : calibrated ? brightnessMap.summary
-            : "not calibrated yet"
-        calibrationReset.isHidden = !calibrated
+        calibrationReset.isHidden = !brightnessMap.isCalibrated
+        calibrationReset.toolTip = brightnessMap.summary
         if !settings.syncBrightness { brightness.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
@@ -329,9 +296,18 @@ final class MenuBarController: NSObject {
 
     @objc private func toggleBrightnessSync() {
         settings.syncBrightness.toggle()
-        // Hand manual control over at the level the panel is actually at, so
-        // switching modes doesn't jump the brightness.
-        if !settings.syncBrightness, let now = currentMiLum ?? originalLuminance {
+        if settings.syncBrightness {
+            // Switching sync back on after setting the Mi by hand *is* the
+            // calibration: "at this MacBook level I wanted this much backlight".
+            // No separate Match-now button, no instructions to follow first.
+            if let bb = BuiltinBrightness.read() {
+                brightnessMap.record(builtin: bb, luminance: settings.manualBrightnessPercent)
+                settings.brightnessMap = brightnessMap
+                log("[calib] \(brightnessMap.summary)")
+            }
+        } else if let now = currentMiLum ?? originalLuminance {
+            // Hand manual control over at the level the panel is actually at, so
+            // switching modes doesn't jump the brightness.
             settings.manualBrightnessPercent = now
         }
         refreshUI()
@@ -341,13 +317,6 @@ final class MenuBarController: NSObject {
     /// Record "the screens match right now". Two such points, taken at clearly
     /// different MacBook levels, define both the offset and the slope — which is
     /// why there are no separate min/max controls.
-    @objc private func calibrateBrightness() {
-        guard let bb = BuiltinBrightness.read(), let lum = currentMiLum else { return }
-        brightnessMap.record(builtin: bb, luminance: lum)
-        settings.brightnessMap = brightnessMap
-        refreshUI()
-        log("[calib] \(brightnessMap.summary)")
-    }
 
     @objc private func resetCalibration() {
         brightnessMap.reset()
