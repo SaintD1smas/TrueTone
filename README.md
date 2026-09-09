@@ -95,13 +95,20 @@ Menu: on/off switch · live readout (+ tint swatch) · **Сила** slider (0–
 
 ### Brightness sync
 
-`Яркость как на MacBook` in the menu (or `truetone bright on`) makes the Mi's
-brightness follow the built-in display's — i.e. the F1/F2 keys. The Mi refuses
-every hardware brightness path (DDC/CI write, DisplayServices, CoreDisplay), so
-this dims it by scaling its gamma LUT. Trade-offs: it can only go *dimmer* than
-the Mi's own setting (never brighter), mild banding is possible at low levels,
-and there's ~0.5 s lag. `Settings.brightnessFloorPercent` (30) is the darkest it
-will go. `swift run ddcprobe` documents why hardware control isn't available.
+`Яркость как на MacBook` in the menu (or `truetone bright on`) drives the Mi's
+**real backlight** over DDC/CI so it follows the F1/F2 keys — it dims *and*
+brightens, with full contrast and no banding.
+
+Implementation note: an earlier attempt concluded this panel ignores DDC writes
+and faked it by scaling the gamma LUT. That was wrong — the bug was in a
+hand-rolled `IOAVServiceWriteI2C` frame (`0x51` was sent both as payload byte
+and as the I2C offset). `DDCBrightness.swift` now shells out to `m1ddc`
+(`brew install m1ddc`), which this monitor accepts.
+
+This monitor's MCU has been hung by tight DDC loops before, so writes are
+coalesced, at least 0.5 s apart, only sent on change, and skipped while the
+panel is asleep or absent; it is never read right after a write. The panel's own
+level is read once at startup and restored on quit.
 
 ### Hiding / restoring the menu-bar icon
 
