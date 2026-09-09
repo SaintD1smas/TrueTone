@@ -42,6 +42,10 @@ final class MenuBarController: NSObject {
         super.init()
         model.intensity = Double(settings.intensityPercent) / 100.0
         model.trimK = Double(settings.trimK)
+        if let profile = PanelProfile.forExternalDisplay() {
+            model.panel = profile
+            model.nativeCCT = profile.nativeCCT
+        }
         // Stable identity so macOS tracks this item's visibility by name.
         statusItem.autosaveName = "com.dmitriy.truetone.status"
         buildMenu()

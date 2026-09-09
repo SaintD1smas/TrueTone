@@ -43,9 +43,13 @@ struct WhitePointModel {
     /// Jump straight to native (used when the feature is switched off).
     mutating func resetToNative() { currentMired = 1_000_000 / nativeCCT }
 
+    /// The panel we're driving. Its real primaries matter: computing gains with a
+    /// hardcoded sRGB matrix on a wide-gamut display overshoots the warm shift.
+    var panel: PanelProfile = .sRGB
+
     /// Per-channel gains (each ≤ 1.0) to apply on top of an identity gamma ramp.
     func rgbGains() -> (r: Double, g: Double, b: Double) {
-        Self.gains(fromCCT: displayCCT, nativeCCT: nativeCCT)
+        Self.gains(fromCCT: displayCCT, nativeCCT: nativeCCT, panel: panel)
     }
 
     // MARK: adaptation curve
@@ -77,9 +81,10 @@ struct WhitePointModel {
 
     // MARK: colour math  (CCT → xy → linear sRGB → normalised gains)
 
-    static func gains(fromCCT cct: Double, nativeCCT: Double) -> (r: Double, g: Double, b: Double) {
-        let want = linearSRGBWhite(cct: cct)
-        let have = linearSRGBWhite(cct: nativeCCT)
+    static func gains(fromCCT cct: Double, nativeCCT: Double,
+                      panel: PanelProfile = .sRGB) -> (r: Double, g: Double, b: Double) {
+        let want = panelWhite(cct: cct, panel: panel)
+        let have = panelWhite(cct: nativeCCT, panel: panel)
         // ratio that maps the native white onto the wanted white
         var r = want.0 / have.0
         var g = want.1 / have.1
@@ -89,15 +94,13 @@ struct WhitePointModel {
         return (clamp01(r), clamp01(g), clamp01(b))
     }
 
-    /// Linear-sRGB (D65 primaries) coordinates of a black-body white at `cct`, Y = 1.
-    private static func linearSRGBWhite(cct: Double) -> (Double, Double, Double) {
+    /// Linear RGB (in the panel's own primaries) of a black-body white at `cct`, Y = 1.
+    private static func panelWhite(cct: Double, panel: PanelProfile) -> (Double, Double, Double) {
         let (x, y) = chromaticity(cct: cct)
-        let X = x / y, Y = 1.0, Z = (1 - x - y) / y
-        // XYZ (D65) → linear sRGB
-        let r =  3.2406 * X - 1.5372 * Y - 0.4986 * Z
-        let g = -0.9689 * X + 1.8758 * Y + 0.0415 * Z
-        let b =  0.0557 * X - 0.2040 * Y + 1.0570 * Z
-        return (max(r, 0), max(g, 0), max(b, 0))
+        let xyz = [x / y, 1.0, (1 - x - y) / y]
+        let m = panel.xyzToRGB
+        let rgb = (0..<3).map { i in (0..<3).map { j in m[i][j] * xyz[j] }.reduce(0, +) }
+        return (max(rgb[0], 0), max(rgb[1], 0), max(rgb[2], 0))
     }
 
     /// Kim et al. CCT → CIE 1931 xy (valid ~1667–25000 K).
