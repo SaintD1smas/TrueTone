@@ -29,6 +29,14 @@ struct Settings {
         set { d.set(newValue, forKey: "syncBrightness") }
     }
 
+    /// Last known health, published so `truetone status` can report it — on this
+    /// Mac the menu-bar icon is often hidden, so the terminal is the only surface
+    /// left for "why isn't it doing anything".
+    var healthNote: String {
+        get { d.string(forKey: "healthNote") ?? "ok" }
+        set { d.set(newValue, forKey: "healthNote") }
+    }
+
     /// Manual Mi backlight level (0…100, DDC luminance), used when
     /// syncBrightness is off. Seeded from the panel's own level at first launch.
     var manualBrightnessPercent: Int {

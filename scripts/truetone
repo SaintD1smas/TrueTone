@@ -42,7 +42,13 @@ case "$1" in
               || defaults write "$D" showInMenuBar -bool true ;;
     on)     defaults write "$D" enabled -bool true ;;
     off)    defaults write "$D" enabled -bool false ;;
-    status) defaults read "$D" 2>/dev/null || echo "(no settings yet — all defaults)"; exit 0 ;;
+    status)
+        if pgrep -x TrueTone >/dev/null; then echo "запущен (pid $(pgrep -x TrueTone))"; else echo "НЕ ЗАПУЩЕН"; fi
+        note=$(defaults read "$D" healthNote 2>/dev/null || echo "ok")
+        [ "$note" = "ok" ] && echo "состояние: ok" || echo "состояние: ⚠︎ $note"
+        echo "---"
+        defaults read "$D" 2>/dev/null || echo "(no settings yet — all defaults)"
+        exit 0 ;;
     ''|*[!0-9]*) usage ;;
     *)      { [ "$1" -ge 0 ] && [ "$1" -le 100 ]; } || usage
             defaults write "$D" intensityPercent -int "$1" ;;

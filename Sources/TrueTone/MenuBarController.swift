@@ -3,6 +3,22 @@ import AppKit
 @MainActor
 final class MenuBarController: NSObject {
 
+    /// What's wrong right now, if anything. Surfaced in the menu-bar glyph and as
+    /// a row at the top of the menu — previously you could only find out by
+    /// opening the menu and noticing the readout had gone quiet.
+    private enum Health: Equatable {
+        case ok, noDisplay, noSensor, noDDC
+
+        var message: String? {
+            switch self {
+            case .ok:        return nil
+            case .noDisplay: return "внешний монитор не подключён"
+            case .noSensor:  return "датчик света недоступен"
+            case .noDDC:     return "нет m1ddc — яркостью не управляем"
+            }
+        }
+    }
+
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let sensor = AmbientSensor()
     private var model = WhitePointModel()
@@ -12,6 +28,7 @@ final class MenuBarController: NSObject {
     private var timer: Timer?
     private var lastTick = Date()
     private var hotKey: HotKey?
+    private var health: Health = .ok
 
     private let debug = ProcessInfo.processInfo.environment["TRUETONE_DEBUG"] == "1"
     private let forceOn = ProcessInfo.processInfo.environment["TRUETONE_FORCE_ON"] == "1"
@@ -19,17 +36,24 @@ final class MenuBarController: NSObject {
 
     private var isEnabled: Bool { settings.enabled || forceOn }
 
+    // views
     private let header = HeaderView()
-    private let readout = ReadoutView()
-    private let strength = StrengthView()
-    private let trim = TrimView()
-    private let brightnessSlider = BrightnessView()
+    private let scale = ScaleView()
+    private let strength = SliderRow(title: "Сила", min: 0, max: 100) { "\($0) %" }
+    private let trim = SliderRow(title: "Подстройка", min: -1000, max: 1000,
+                                 hint: "← теплее   ·   холоднее →") { k in
+        k == 0 ? "0" : (k < 0 ? "теплее \(-k) K" : "холоднее \(k) K")
+    }
+    private let brightness = SliderRow(title: "Яркость Mi", min: 0, max: 100) { "\($0) %" }
+
+    // menu items
+    private let problemItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let brightnessToggle = NSMenuItem(title: "Как на MacBook", action: nil, keyEquivalent: "")
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
-    private let brightnessToggle = NSMenuItem(title: "Яркость как на MacBook", action: nil, keyEquivalent: "")
+    private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     /// The Mi's own luminance before we touched it — restored on quit.
     private var originalLuminance: Int?
-    private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     private var lastSyncedEnabled = false
     private var lastSyncedMenuBar = true
@@ -50,21 +74,16 @@ final class MenuBarController: NSObject {
         model.trimK = Double(settings.trimK)
         display.onDisplaysChanged = { [weak self] in self?.resolvePanel() }
         resolvePanel()
-        // Stable identity so macOS tracks this item's visibility by name.
+
         statusItem.autosaveName = "com.dmitriy.truetone.status"
         buildMenu()
         refreshUI()
         installSignalHandlers()
 
         hotKey = HotKey { [weak self] in self?.revealMenu() }
-
-        // A second launch of the app posts this; we bring the menu up.
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(handleRevealNotification),
             name: .init("com.dmitriy.truetone.reveal"), object: nil)
-
-        if sensor == nil { readout.message("⚠️ датчик света недоступен") }
-
 
         lastTick = Date()
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -81,27 +100,32 @@ final class MenuBarController: NSObject {
         let menu = NSMenu()
 
         header.onToggle = { [weak self] on in self?.setEnabled(on) }
-        strength.onChange = { [weak self] pct in self?.setIntensity(pct) }
-        trim.onChange = { [weak self] k in self?.setTrim(k) }
-        brightnessSlider.onChange = { [weak self] pct in self?.setManualBrightness(pct) }
+        strength.onChange = { [weak self] v in self?.setIntensity(v) }
+        trim.step = 50
+        trim.onChange = { [weak self] v in self?.setTrim(v) }
+        brightness.onChange = { [weak self] v in self?.setManualBrightness(v) }
 
         menu.addItem(hosting(header))
+
+        problemItem.isEnabled = false
+        problemItem.isHidden = true
+        menu.addItem(problemItem)
+
         menu.addItem(.separator())
-        menu.addItem(hosting(readout))
+        menu.addItem(hosting(scale))
+
+        menu.addItem(.sectionHeader(title: "Цвет"))
         menu.addItem(hosting(strength))
         menu.addItem(hosting(trim))
-        menu.addItem(hosting(brightnessSlider))
-        menu.addItem(.separator())
 
+        menu.addItem(.sectionHeader(title: "Яркость"))
         brightnessToggle.target = self
         brightnessToggle.action = #selector(toggleBrightnessSync)
         brightnessToggle.toolTip = "Подсветка Mi едет за клавишами яркости MacBook (по DDC)"
-        if !DDCBrightness.isAvailable {
-            brightnessToggle.isEnabled = false
-            brightnessToggle.toolTip = "нужен m1ddc: brew install m1ddc"
-        }
         menu.addItem(brightnessToggle)
+        menu.addItem(hosting(brightness))
 
+        menu.addItem(.sectionHeader(title: "Приложение"))
         loginToggle.target = self
         loginToggle.action = #selector(toggleLogin)
         if !LoginItem.isBundled {
@@ -134,34 +158,59 @@ final class MenuBarController: NSObject {
         strength.set(settings.intensityPercent)
         trim.set(settings.trimK)
         brightnessToggle.state = settings.syncBrightness ? .on : .off
-        brightnessSlider.setEnabled(!settings.syncBrightness)
-        if !settings.syncBrightness { brightnessSlider.set(settings.manualBrightnessPercent) }
+        brightnessToggle.isEnabled = DDCBrightness.isAvailable
+        brightness.setEnabled(!settings.syncBrightness && DDCBrightness.isAvailable)
+        if !settings.syncBrightness { brightness.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
+
+        if let msg = health.message {
+            problemItem.title = "⚠︎  " + msg
+            problemItem.isHidden = false
+        } else {
+            problemItem.isHidden = true
+        }
 
         statusItem.isVisible = settings.showInMenuBar
         if let b = statusItem.button {
-            b.image = Self.icon(enabled: isEnabled)
+            b.image = Self.icon(enabled: isEnabled, problem: health != .ok)
             b.imagePosition = .imageOnly
-            b.toolTip = "TrueTone"
+            b.toolTip = health.message.map { "TrueTone — " + $0 } ?? "TrueTone"
         }
     }
 
-    /// Drawn menu-bar icon — a half-filled circle. No SF Symbols dependency.
-    private static func icon(enabled: Bool) -> NSImage {
+    /// Menu-bar glyph: a ring that fills on the left when adapting, with a slash
+    /// when something needs attention. Drawn rather than an SF Symbol so it can
+    /// never silently fail to load.
+    private static func icon(enabled: Bool, problem: Bool) -> NSImage {
         let img = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
             let r = rect.insetBy(dx: 2.5, dy: 2.5)
-            let ring = NSBezierPath(ovalIn: r)
-            ring.lineWidth = 1.4
-            NSColor.black.setStroke()
-            ring.stroke()
+            let c = NSPoint(x: r.midX, y: r.midY)
+
             if enabled {
                 let half = NSBezierPath()
-                let c = NSPoint(x: r.midX, y: r.midY)
                 half.move(to: c)
                 half.appendArc(withCenter: c, radius: r.width / 2, startAngle: 90, endAngle: 270)
                 half.close()
                 NSColor.black.setFill()
                 half.fill()
+            }
+            let ring = NSBezierPath(ovalIn: r)
+            ring.lineWidth = enabled ? 1.5 : 1.2
+            NSColor.black.setStroke()
+            ring.stroke()
+
+            if problem {
+                // knock a gap out of the glyph, then draw the slash in it
+                let slash = NSBezierPath()
+                slash.move(to: NSPoint(x: r.minX + 2.6, y: r.minY + 2.6))
+                slash.line(to: NSPoint(x: r.maxX - 2.6, y: r.maxY - 2.6))
+                NSColor.black.setStroke()
+                NSGraphicsContext.current?.compositingOperation = .clear
+                slash.lineWidth = 3
+                slash.stroke()
+                NSGraphicsContext.current?.compositingOperation = .sourceOver
+                slash.lineWidth = 1.5
+                slash.stroke()
             }
             return true
         }
@@ -215,7 +264,7 @@ final class MenuBarController: NSObject {
     @objc private func toggleBrightnessSync() {
         settings.syncBrightness.toggle()
         if !settings.syncBrightness, let o = originalLuminance {
-            settings.manualBrightnessPercent = o        // hand control back at the panel's own level
+            settings.manualBrightnessPercent = o
             DDCBrightness.set(o)
         }
         refreshUI()
@@ -249,9 +298,6 @@ final class MenuBarController: NSObject {
         statusItem.isVisible = true
         refreshUI()
         NSApp.activate(ignoringOtherApps: true)
-
-        // Give the status bar a beat to lay the item out, then click it so the
-        // menu anchors under the real icon.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if let button = self.statusItem.button, button.window != nil {
@@ -266,7 +312,7 @@ final class MenuBarController: NSObject {
     @objc private func handleRevealNotification() { revealMenu() }
 
     @objc private func quit() {
-        display.restore()
+        shutdown()
         NSApp.terminate(nil)
     }
 
@@ -312,7 +358,7 @@ final class MenuBarController: NSObject {
             model.intensity = Double(settings.intensityPercent) / 100.0
             model.trimK = Double(settings.trimK)
             if settings.enabled != lastSyncedEnabled { model.resetToNative() }
-            if !isEnabled { display.restore() }   // colour only; brightness is DDC now
+            if !isEnabled { display.restore() }
             refreshUI()
             lastSyncedEnabled = settings.enabled
             lastSyncedMenuBar = settings.showInMenuBar
@@ -321,6 +367,14 @@ final class MenuBarController: NSObject {
             lastSyncedBright = settings.syncBrightness
             lastSyncedManual = settings.manualBrightnessPercent
         }
+    }
+
+    private func externalDisplayPresent() -> Bool {
+        var n: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &n)
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+        CGGetOnlineDisplayList(n, &ids, &n)
+        return ids.contains { CGDisplayIsBuiltin($0) == 0 }
     }
 
     private func tick() {
@@ -338,15 +392,28 @@ final class MenuBarController: NSObject {
         }
 
         let reading = sensor?.read()
-        let ttActive = isEnabled && reading != nil
+        let hasDisplay = externalDisplayPresent()
 
-        // --- real backlight over DDC (not a gamma fake) ---
+        let newHealth: Health =
+            !hasDisplay ? .noDisplay
+            : sensor == nil || reading == nil ? .noSensor
+            : (settings.syncBrightness && !DDCBrightness.isAvailable) ? .noDDC
+            : .ok
+        if newHealth != health {
+            health = newHealth
+            settings.healthNote = newHealth.message ?? "ok"
+            refreshUI()
+        }
+
+        let ttActive = isEnabled && reading != nil && hasDisplay
+
+        // --- real backlight over DDC ---
         var miLuminance: Int?
         if settings.syncBrightness, let bb = BuiltinBrightness.read() {
             let target = min(max(Int((bb * 100).rounded()), 5), 100)
             DDCBrightness.set(target)
             miLuminance = target
-            brightnessSlider.set(target)          // reflect on the disabled slider
+            brightness.set(target)          // reflect on the disabled slider
         } else if !settings.syncBrightness {
             let target = settings.manualBrightnessPercent
             DDCBrightness.set(target)
@@ -355,9 +422,9 @@ final class MenuBarController: NSObject {
 
         guard ttActive else {
             if display.isTinted { display.restore() }
-            readout.message(isEnabled && reading == nil
-                ? "⚠️ нет данных с датчика"
-                : (reading.map { String(format: "выкл · свет %.0f K · %.0f lx", $0.cct, $0.lux) } ?? "выкл"))
+            scale.update(ambientK: reading?.cct, screenK: nil,
+                         detail: health.message ?? "адаптация выключена",
+                         caption: isEnabled ? "ждём данных" : "выключено")
             return
         }
 
@@ -369,16 +436,14 @@ final class MenuBarController: NSObject {
         display.apply(r: g.r, g: g.g, b: g.b)
 
         if let rd = reading {
-            readout.update(ambientK: rd.cct,
-                           screenK: model.displayCCT,
-                           lux: rd.lux,
-                           tint: NSColor(srgbRed: g.r, green: g.g, blue: g.b, alpha: 1),
-                           bright: miLuminance.map { Double($0) / 100.0 })
+            var detail = String(format: "%.0f lx", rd.lux)
+            if let lum = miLuminance { detail += String(format: "   ·   яркость %d %%", lum) }
+            scale.update(ambientK: rd.cct, screenK: model.displayCCT, detail: detail,
+                         caption: String(format: "свет %.0f K  →  экран %.0f K",
+                                         rd.cct, model.displayCCT))
         }
 
         log(String(format: "tt=on  mi-lum=%@  gains %.3f/%.3f/%.3f",
                    miLuminance.map(String.init) ?? "-", g.r, g.g, g.b))
     }
-
-    private let nativeCCT: Double = 6500
 }
