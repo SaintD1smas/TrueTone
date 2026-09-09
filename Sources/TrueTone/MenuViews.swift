@@ -9,7 +9,7 @@ let kMenuTextInset: CGFloat = 21
 @MainActor
 final class HeaderView: NSView {
     private let title = NSTextField(labelWithString: "TrueTone")
-    private let subtitle = NSTextField(labelWithString: "внешний монитор")
+    private let subtitle = NSTextField(labelWithString: "external display")
     private let toggle = NSSwitch()
     var onToggle: ((Bool) -> Void)?
 

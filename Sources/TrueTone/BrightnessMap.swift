@@ -72,8 +72,8 @@ struct BrightnessMap: Equatable {
     var summary: String {
         let a = anchors
         switch a.count {
-        case 0: return "без калибровки"
-        case 1: return String(format: "1 точка: %.0f %% → %d", a[0].b * 100, a[0].lum)
+        case 0: return "not calibrated"
+        case 1: return String(format: "1 point: %.0f %% → %d", a[0].b * 100, a[0].lum)
         default: return String(format: "%.0f %% → %d  ·  %.0f %% → %d",
                                a[0].b * 100, a[0].lum, a[1].b * 100, a[1].lum)
         }

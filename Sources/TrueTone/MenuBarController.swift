@@ -12,10 +12,10 @@ final class MenuBarController: NSObject {
         var message: String? {
             switch self {
             case .ok:        return nil
-            case .noDisplay: return "внешний монитор не подключён"
-            case .noSensor:  return "датчик света недоступен"
-            case .noDDC:     return "нет m1ddc — яркостью не управляем"
-            case .noBuiltin: return "крышка закрыта — не за чем следить по яркости"
+            case .noDisplay: return "no external display"
+            case .noSensor:  return "light sensor unavailable"
+            case .noDDC:     return "m1ddc missing — brightness not controlled"
+            case .noBuiltin: return "lid closed — no brightness to follow"
             }
         }
     }
@@ -44,19 +44,19 @@ final class MenuBarController: NSObject {
     // views
     private let header = HeaderView()
     private let scale = ScaleView()
-    private let strength = SliderRow(title: "Сила", min: 0, max: 100) { "\($0) %" }
-    private let trim = SliderRow(title: "Подстройка", min: -1000, max: 1000,
-                                 hint: "← теплее   ·   холоднее →", bipolar: true) { k in
-        k == 0 ? "0" : (k < 0 ? "теплее \(-k) K" : "холоднее \(k) K")
+    private let strength = SliderRow(title: "Strength", min: 0, max: 100) { "\($0) %" }
+    private let trim = SliderRow(title: "Trim", min: -1000, max: 1000,
+                                 hint: "← warmer   ·   cooler →", bipolar: true) { k in
+        k == 0 ? "0" : (k < 0 ? "warmer \(-k) K" : "cooler \(k) K")
     }
-    private let brightness = SliderRow(title: "Яркость Mi", min: 0, max: 100) { "\($0) %" }
+    private let brightness = SliderRow(title: "Mi brightness", min: 0, max: 100) { "\($0) %" }
 
     // menu items
     private let problemItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let brightnessToggle = NSMenuItem(title: "Как на MacBook", action: nil, keyEquivalent: "")
-    private let calibrateItem = NSMenuItem(title: "Совместить сейчас", action: nil, keyEquivalent: "")
+    private let brightnessToggle = NSMenuItem(title: "Match MacBook", action: nil, keyEquivalent: "")
+    private let calibrateItem = NSMenuItem(title: "Match now", action: nil, keyEquivalent: "")
     private let calibrationInfo = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let calibrationReset = NSMenuItem(title: "Сбросить калибровку", action: nil, keyEquivalent: "")
+    private let calibrationReset = NSMenuItem(title: "Reset calibration", action: nil, keyEquivalent: "")
     private let calibrationSeparator = NSMenuItem.separator()
 
     /// How MacBook brightness maps onto the Mi's backlight.
@@ -64,8 +64,8 @@ final class MenuBarController: NSObject {
     /// Last luminance we asked the panel for — the value calibration records.
     private var currentMiLum: Int?
     private var brightnessTimer: Timer?
-    private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
-    private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
+    private let loginToggle = NSMenuItem(title: "Start at login", action: nil, keyEquivalent: "")
+    private let menuBarToggle = NSMenuItem(title: "Hide icon", action: nil, keyEquivalent: "")
 
     /// The Mi's own luminance at launch — seeds the manual slider so the first
     /// hand-over doesn't jump. Deliberately *not* restored on quit.
@@ -141,14 +141,14 @@ final class MenuBarController: NSObject {
         menu.addItem(.separator())
         menu.addItem(hosting(scale))
 
-        menu.addItem(.sectionHeader(title: "Цвет"))
+        menu.addItem(.sectionHeader(title: "Color"))
         menu.addItem(hosting(strength))
         menu.addItem(hosting(trim))
 
-        menu.addItem(.sectionHeader(title: "Яркость"))
+        menu.addItem(.sectionHeader(title: "Brightness"))
         brightnessToggle.target = self
         brightnessToggle.action = #selector(toggleBrightnessSync)
-        brightnessToggle.toolTip = "Подсветка Mi едет за клавишами яркости MacBook (по DDC)"
+        brightnessToggle.toolTip = "The Mi's backlight follows the MacBook's brightness keys, over DDC"
         menu.addItem(brightnessToggle)
         menu.addItem(hosting(brightness))
 
@@ -157,8 +157,8 @@ final class MenuBarController: NSObject {
         calibrateItem.target = self
         calibrateItem.action = #selector(calibrateBrightness)
         calibrateItem.toolTip = """
-            Выключи «Как на MacBook», подгони ползунком, чтобы экраны совпали, и нажми.
-            Повтори на заметно другой яркости MacBook — две точки задают и совпадение, и диапазон.
+            Turn off "Match MacBook", set the slider until the screens agree, then press this.
+            Repeat at a clearly different MacBook level — two points fix both the match and the range.
             """
         calibrationReset.target = self
         calibrationReset.action = #selector(resetCalibration)
@@ -170,26 +170,26 @@ final class MenuBarController: NSObject {
         calibrationMenu.addItem(calibrationSeparator)
         calibrationMenu.addItem(calibrationInfo)
 
-        let calibrationHost = NSMenuItem(title: "Калибровка", action: nil, keyEquivalent: "")
+        let calibrationHost = NSMenuItem(title: "Calibration", action: nil, keyEquivalent: "")
         calibrationHost.submenu = calibrationMenu
         menu.addItem(calibrationHost)
 
-        menu.addItem(.sectionHeader(title: "Приложение"))
+        menu.addItem(.sectionHeader(title: "App"))
         loginToggle.target = self
         loginToggle.action = #selector(toggleLogin)
         if !LoginItem.isBundled {
             loginToggle.isEnabled = false
-            loginToggle.toolTip = "доступно после установки через scripts/install.sh"
+            loginToggle.toolTip = "available once installed via scripts/install.sh"
         }
         menu.addItem(loginToggle)
 
         menuBarToggle.target = self
         menuBarToggle.action = #selector(hideIcon)
-        menuBarToggle.toolTip = "Вернуть: открыть TrueTone в Finder / Launchpad, или ⌃⌥⌘T"
+        menuBarToggle.toolTip = "To bring it back: open TrueTone from Finder / Launchpad, or press ⌃⌥⌘T"
         menu.addItem(menuBarToggle)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Выйти", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 
@@ -213,8 +213,8 @@ final class MenuBarController: NSObject {
         // current line — and could displace a good anchor. Calibrate with sync off.
         calibrateItem.isEnabled = DDCBrightness.isAvailable && !settings.syncBrightness
         calibrateItem.toolTip = settings.syncBrightness
-            ? "Сначала выключи «Как на MacBook» и подгони ползунком"
-            : "Запомнить, что сейчас экраны совпадают. Повтори на другой яркости MacBook."
+            ? "Turn off \"Match MacBook\" first, then set the slider"
+            : "Remember that the screens agree right now. Repeat at another MacBook level."
         calibrationInfo.title = brightnessMap.summary
         let calibrated = brightnessMap.isCalibrated
         calibrationInfo.isHidden = !calibrated
@@ -314,7 +314,7 @@ final class MenuBarController: NSObject {
             self.refreshUI()
             self.log(String(format: "[resolve] panel native=%.0fK ddc=%@ origLum=%d",
                             self.model.nativeCCT,
-                            DDCBrightness.isAvailable ? "ok" : "нет", level))
+                            DDCBrightness.isAvailable ? "ok" : "none", level))
         }
     }
 
@@ -529,8 +529,8 @@ final class MenuBarController: NSObject {
         guard ttActive else {
             if display.isTinted { display.restore() }
             scale.update(ambientK: reading?.cct, screenK: nil,
-                         detail: health.message ?? "адаптация выключена",
-                         caption: isEnabled ? "ждём данных" : "выключено")
+                         detail: health.message ?? "adaptation off",
+                         caption: isEnabled ? "waiting for data" : "off")
             return
         }
 
@@ -543,7 +543,7 @@ final class MenuBarController: NSObject {
 
         if let rd = reading {
             var detail = String(format: "%.0f lx", rd.lux)
-            if let lum = miLuminance { detail += String(format: "   ·   яркость %d %%", lum) }
+            if let lum = miLuminance { detail += String(format: "   ·   brightness %d %%", lum) }
             // In the dark the sensor's colour reading is nonsense (a few hundred
             // Kelvin) — say so rather than printing it as if it meant something.
             let usable = model.isReadingUsable(lux: rd.lux, ambientCCT: rd.cct)
@@ -551,8 +551,8 @@ final class MenuBarController: NSObject {
                          screenK: model.displayCCT,
                          detail: detail,
                          caption: usable
-                            ? String(format: "свет %.0f K  →  экран %.0f K", rd.cct, model.displayCCT)
-                            : String(format: "слишком темно  ·  экран %.0f K", model.displayCCT))
+                            ? String(format: "light %.0f K  →  screen %.0f K", rd.cct, model.displayCCT)
+                            : String(format: "too dark  ·  screen %.0f K", model.displayCCT))
         }
 
         log(String(format: "tt=on  mi-lum=%@  gains %.3f/%.3f/%.3f",

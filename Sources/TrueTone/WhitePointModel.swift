@@ -8,7 +8,7 @@ struct WhitePointModel {
 
     // Tunables. Apple's True Tone is subtle: it moves the white point only a
     // fraction of the way toward the ambient colour, and reaches full strength
-    // only in bright (outdoor-ish) light. These defaults mirror that; "Сила"
+    // only in bright (outdoor-ish) light. These defaults mirror that; "Strength"
     // scales it further down.
     var nativeCCT: Double = 6500          // display native white (D65)
     var maxAdapt: Double = 0.45          // at most ~45 % of the way toward ambient
