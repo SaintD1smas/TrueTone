@@ -52,7 +52,23 @@ enum DDCBrightness {
         queue.async { cachedIndex = nil; lastWritten = nil; pending = nil }
     }
 
-    static var isAvailable: Bool { binary != nil && displayIndex != nil }
+    /// Cheap and non-blocking — safe to call from the main thread every tick.
+    /// It reports what we already know; probing happens on `queue` via prepare().
+    static var isAvailable: Bool { binary != nil && cachedIndex != nil }
+
+    /// Resolve the display index off the main thread. Safe to call repeatedly.
+    static func prepare() {
+        guard binary != nil, cachedIndex == nil else { return }
+        queue.async { _ = displayIndex }
+    }
+
+    /// Read the panel's current luminance off the main thread.
+    static func readAsync(_ completion: @escaping (Int?) -> Void) {
+        queue.async {
+            let v = read()
+            DispatchQueue.main.async { completion(v) }
+        }
+    }
 
     /// Only talk to the panel while it's actually online and awake. Writes across
     /// sleep/wake transitions are what has upset this monitor's MCU before.
@@ -92,8 +108,11 @@ enum DDCBrightness {
         return body()
     }
 
+    /// Run m1ddc with a hard timeout. `~/.monitor_ddc.zsh` wraps every DDC call
+    /// the same way because a wedged MCU makes m1ddc never return — without this,
+    /// readDataToEndOfFile() blocks forever and takes the caller with it.
     @discardableResult
-    private static func run(_ args: [String]) -> String? {
+    private static func run(_ args: [String], timeout: TimeInterval = 3) -> String? {
         guard let binary else { return nil }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: binary)
@@ -102,9 +121,20 @@ enum DDCBrightness {
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+
+        let done = DispatchSemaphore(value: 0)
+        var output = Data()
+        DispatchQueue.global(qos: .utility).async {
+            output = pipe.fileHandleForReading.readDataToEndOfFile()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            p.terminate()
+            _ = done.wait(timeout: .now() + 0.5)
+            return nil
+        }
         p.waitUntilExit()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Read the panel's current luminance. Only safe to call when idle — reads
@@ -140,16 +170,6 @@ enum DDCBrightness {
         guard let idx = displayIndex, v != lastWritten, displayReady else { return }
         // If the wake-repair scripts hold the lock, skip — the next tick retries.
         guard withLock({ run(["display", idx, "set", "luminance", String(v)]) }) != nil else { return }
-        lastWritten = v
-        lastWriteAt = Date()
-    }
-
-    /// Synchronous write — for shutdown paths, where the async queue would never
-    /// get to run before the process exits.
-    static func setNow(_ value: Int) {
-        let v = min(max(value, 0), 100)
-        guard let idx = displayIndex else { return }
-        _ = withLock { run(["display", idx, "set", "luminance", String(v)]) }
         lastWritten = v
         lastWriteAt = Date()
     }

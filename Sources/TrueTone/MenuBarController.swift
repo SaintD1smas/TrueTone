@@ -7,7 +7,7 @@ final class MenuBarController: NSObject {
     /// a row at the top of the menu — previously you could only find out by
     /// opening the menu and noticing the readout had gone quiet.
     private enum Health: Equatable {
-        case ok, noDisplay, noSensor, noDDC
+        case ok, noDisplay, noSensor, noDDC, noBuiltin
 
         var message: String? {
             switch self {
@@ -15,12 +15,17 @@ final class MenuBarController: NSObject {
             case .noDisplay: return "внешний монитор не подключён"
             case .noSensor:  return "датчик света недоступен"
             case .noDDC:     return "нет m1ddc — яркостью не управляем"
+            case .noBuiltin: return "крышка закрыта — не за чем следить по яркости"
             }
         }
     }
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let sensor = AmbientSensor()
+    /// Not `let`: the HID service can be replaced across sleep/wake, which leaves
+    /// our cached pointer stale and the sensor silently dead. Re-created after a
+    /// run of failed reads.
+    private var sensor = AmbientSensor()
+    private var sensorFailures = 0
     private var model = WhitePointModel()
     private let display = DisplayController()
     private var settings = Settings()
@@ -289,16 +294,19 @@ final class MenuBarController: NSObject {
             model.panel = profile
             model.nativeCCT = profile.nativeCCT
         }
-        if originalLuminance == nil, let level = DDCBrightness.read() {
-            originalLuminance = level
-            if settings.manualBrightnessPercent == 100 {
-                settings.manualBrightnessPercent = level
+        DDCBrightness.prepare()          // resolves the display index off-main
+        guard originalLuminance == nil else { return }
+        DDCBrightness.readAsync { [weak self] level in
+            guard let self, let level, self.originalLuminance == nil else { return }
+            self.originalLuminance = level
+            if self.settings.manualBrightnessPercent == 100 {
+                self.settings.manualBrightnessPercent = level
             }
+            self.refreshUI()
+            self.log(String(format: "[resolve] panel native=%.0fK ddc=%@ origLum=%d",
+                            self.model.nativeCCT,
+                            DDCBrightness.isAvailable ? "ok" : "нет", level))
         }
-        log(String(format: "[resolve] panel native=%.0fK ddc=%@ origLum=%@",
-                   model.nativeCCT,
-                   DDCBrightness.isAvailable ? "ok" : "нет",
-                   originalLuminance.map(String.init) ?? "—"))
     }
 
     private func setTrim(_ k: Int) {
@@ -309,9 +317,10 @@ final class MenuBarController: NSObject {
 
     @objc private func toggleBrightnessSync() {
         settings.syncBrightness.toggle()
-        if !settings.syncBrightness, let o = originalLuminance {
-            settings.manualBrightnessPercent = o
-            DDCBrightness.set(o)
+        // Hand manual control over at the level the panel is actually at, so
+        // switching modes doesn't jump the brightness.
+        if !settings.syncBrightness, let now = currentMiLum ?? originalLuminance {
+            settings.manualBrightnessPercent = now
         }
         refreshUI()
         tick()
@@ -380,8 +389,11 @@ final class MenuBarController: NSObject {
     }
 
     func shutdown() {
+        // Gamma is our overlay, so it must come off. The backlight is not: it's a
+        // real setting the user sees and can change on the monitor itself, so
+        // snapping it back to whatever it was at launch would mean quitting at
+        // night flashes the screen back to a daytime level. Leave it as it is.
         display.restore()
-        if let o = originalLuminance { DDCBrightness.setNow(o) }
     }
 
     private func installSignalHandlers() {
@@ -473,13 +485,26 @@ final class MenuBarController: NSObject {
             resolvePanel()
         }
 
-        let reading = sensor?.read()
+        var reading = sensor?.read()
+        if reading == nil {
+            sensorFailures += 1
+            if sensorFailures >= 10 {          // ~5 s of nothing — the service may
+                sensorFailures = 0             // have been replaced across a wake
+                sensor = AmbientSensor()
+                reading = sensor?.read()
+                log("[sensor] re-created: \(sensor == nil ? "still nil" : "ok")")
+            }
+        } else {
+            sensorFailures = 0
+        }
         let hasDisplay = externalDisplayPresent()
 
         let newHealth: Health =
             !hasDisplay ? .noDisplay
             : sensor == nil || reading == nil ? .noSensor
             : (settings.syncBrightness && !DDCBrightness.isAvailable) ? .noDDC
+            // Clamshell: nothing to follow, so sync looks on but does nothing.
+            : (settings.syncBrightness && BuiltinBrightness.read() == nil) ? .noBuiltin
             : .ok
         if newHealth != health {
             health = newHealth

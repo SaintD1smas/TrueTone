@@ -22,8 +22,8 @@ struct Settings {
         set { d.set(newValue, forKey: "trimK") }
     }
 
-    /// Follow the MacBook's brightness (F1/F2) on the external monitor by
-    /// scaling its gamma (the Mi ignores hardware brightness control).
+    /// Follow the MacBook's brightness (F1/F2) on the external monitor's real
+    /// backlight over DDC.
     var syncBrightness: Bool {
         get { d.object(forKey: "syncBrightness") as? Bool ?? false }
         set { d.set(newValue, forKey: "syncBrightness") }
