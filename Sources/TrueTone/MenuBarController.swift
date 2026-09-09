@@ -164,11 +164,13 @@ final class MenuBarController: NSObject {
         calibrationReset.action = #selector(resetCalibration)
         calibrationInfo.isEnabled = false
 
+        // State first, then the actions — the submenu has to stand on its own,
+        // otherwise it collapses to a single greyed row that explains nothing.
         let calibrationMenu = NSMenu()
+        calibrationMenu.addItem(calibrationInfo)
+        calibrationMenu.addItem(calibrationSeparator)
         calibrationMenu.addItem(calibrateItem)
         calibrationMenu.addItem(calibrationReset)
-        calibrationMenu.addItem(calibrationSeparator)
-        calibrationMenu.addItem(calibrationInfo)
 
         let calibrationHost = NSMenuItem(title: "Calibration", action: nil, keyEquivalent: "")
         calibrationHost.submenu = calibrationMenu
@@ -211,15 +213,16 @@ final class MenuBarController: NSObject {
         brightness.setEnabled(!settings.syncBrightness && DDCBrightness.isAvailable)
         // Recording an anchor while sync drives the panel would just re-affirm the
         // current line — and could displace a good anchor. Calibrate with sync off.
-        calibrateItem.isEnabled = DDCBrightness.isAvailable && !settings.syncBrightness
-        calibrateItem.toolTip = settings.syncBrightness
-            ? "Turn off \"Match MacBook\" first, then set the slider"
-            : "Remember that the screens agree right now. Repeat at another MacBook level."
-        calibrationInfo.title = brightnessMap.summary
         let calibrated = brightnessMap.isCalibrated
-        calibrationInfo.isHidden = !calibrated
+        calibrateItem.isEnabled = DDCBrightness.isAvailable && !settings.syncBrightness
+        calibrateItem.toolTip =
+            "Remember that the screens agree right now. Repeat at another MacBook level."
+        calibrationInfo.title =
+            !DDCBrightness.isAvailable ? "brightness control unavailable"
+            : settings.syncBrightness ? "turn “Match MacBook” off to calibrate"
+            : calibrated ? brightnessMap.summary
+            : "not calibrated yet"
         calibrationReset.isHidden = !calibrated
-        calibrationSeparator.isHidden = !calibrated
         if !settings.syncBrightness { brightness.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
