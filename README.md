@@ -1,200 +1,271 @@
 # TrueTone
 
 A personal macOS menu-bar app that reproduces Apple's **True Tone** on an
-**external monitor** (Xiaomi "Mi Monitor"), driven by the MacBook's own
-ambient-light sensor.
+**external monitor** (Xiaomi "Mi Monitor", USB-C), driven by the MacBook's own
+ambient-light sensor — and syncs that monitor's **backlight** to the MacBook's
+brightness keys.
 
 Target machine: MacBook Air M3 (`Mac15,12`), macOS 15.7.2, Apple Silicon.
-Personal use only — private APIs are fair game, App Store is not a goal.
+Personal use only — private APIs are fair game, the App Store is not a goal.
+UI strings are English; the owner's working language is Russian.
 
 ---
 
-## Spike findings (2026-08-29)
+## Read this first (hazards)
 
-Run the probe: `swift run ttprobe`  (add `--watch 20` to watch live fields,
-`--cb` to also probe CoreBrightness — it destabilises the ObjC runtime in-process,
-off by default).
+**This monitor's controller can be wedged, and recovery is a 30-second unplug.**
+See `~/.monitor_ddc.zsh` and the owner's monitor LaunchAgents — they exist
+because of past incidents. Rules that are not negotiable:
 
-### 1. Applying a white point to the Mi Monitor — OK
+- **Never write VCP `D6`** (`m1ddc set standby 4/5`). Hard-off powers the scaler
+  down, the USB-C sink disappears, and nothing software can bring it back.
+- **Never switch input away from USB-C (16).** Parking on an empty HDMI input
+  drops the DP link; macOS then has no display and DDC has no route home.
+- **Never loop DDC.** Sustained set+get cycles wedge the MCU. Writes only, spaced
+  out, and never a read immediately after a write (it returns an error value).
+- **Take the shared lock.** The owner's shell hooks guard every DDC call with a
+  `mkdir` mutex on `~/.monitor_hook.lock` (25 s staleness rule). `DDCBrightness`
+  takes the same one and skips the write if the hooks hold it. Anything new that
+  talks DDC must do likewise.
 
-- CoreGraphics display id **2** = Mi Monitor, vendor `0x61a9`, model `0x27a1`,
-  1024-entry gamma table, currently identity.
-- `CGGetDisplayTransferByTable` / `CGSetDisplayTransferByTable` work → we drive the
-  white point by scaling the per-channel transfer ramps. No root, no entitlement.
-- The **built-in** panel also shows identity gamma while running real True Tone →
-  Apple applies its shift in DCP/hardware, *below* CoreGraphics. So we cannot read
-  Apple's live shift back, and we don't try to — we compute our own from the sensor.
-
-### 2. Reading ambient light **and colour** — OK, unentitled
-
-The sensor is an **STMicro VD6286** CRGB colour ALS
-(`AppleSPUVD6286`, driver `com.apple.driver.AppleALSColorSensor`, `crgb = 1`).
-It publishes a HID `AmbientLightSensor` event (type 12) on a vendor page
-(`PrimaryUsagePage 0xFF00`, `PrimaryUsage 4`, transport SPU).
-
-Read path — no entitlement, no TCC prompt, plain `swift build` binary:
-
-```
-client  = IOHIDEventSystemClientCreate(kCFAllocatorDefault)
-          IOHIDEventSystemClientSetMatching(client, NULL)          // match all
-services = IOHIDEventSystemClientCopyServices(client)
-for svc in services:
-    ev = IOHIDServiceClientCopyEvent(svc, 12 /*ALS*/, 0, 0)
-    if ev: value = IOHIDEventGetFloatValue(ev, 0xC0000 + offset)
-```
-
-Observed fields (`base = 12 << 16 = 0xC0000`), M3 Air, typical room light:
-
-| offset | value      | meaning (historical IOKit layout) |
-|-------:|-----------:|-----------------------------------|
-| +0x00  | 150        | illuminance / lux                 |
-| +0x01  | 1539       | raw channel 0                     |
-| +0x02  | 1188       | raw channel 1                     |
-| +0x03  | 1495       | raw channel 2                     |
-| +0x04  | 1667       | raw channel 3                     |
-| +0x06  | 1          | colour-space / channel flag       |
-| +0x07  | 151.7      | colour component (fractional)     |
-| +0x08  | 150.7      | colour component (fractional)     |
-| +0x09  | 120.6      | ?                                 |
-| **+0x0a** | **~4900** | **correlated colour temp, Kelvin** |
-| +0x0b  | 150.7      | = +0x08                           |
-
-`+0x0a` (CCT in Kelvin) is the clean, directly usable signal. Raw channels are
-there if we want to refine chromaticity / tint. Exact channel→RGBC mapping and the
-meaning of +0x07/+0x08 still need a `--watch` run under changing light.
-
-`AppleSPUVD6286` also exposes `CurrentLux` as a plain ioreg property (lux only) —
-a zero-dependency fallback.
-
-### Verdict
-
-**Path A — a real True Tone clone — is feasible.** Same sensor Apple uses, raw
-CRGB + a ready CCT, all from an unsandboxed unentitled binary. Apply via gamma
-tables on the Mi.
+**Do not trust old conclusions in git history.** One commit states the panel
+rejects DDC brightness writes. It does not — that was a bug in a hand-rolled
+I2C frame. Verify against hardware before building on any claim here.
 
 ---
 
-## Install (runs at login)
+## Install and control
 
 ```
-scripts/install.sh      # build release → ~/Applications/TrueTone.app → LaunchAgent
-scripts/uninstall.sh    # stop + remove everything
+scripts/install.sh      # release build → ~/Applications/TrueTone.app → LaunchAgent
+scripts/uninstall.sh    # stop and remove everything
+swift build && ./.build/debug/TrueTone     # run without installing
+swift test                                  # pure maths, no hardware needed
 ```
 
-`install.sh` registers `~/Library/LaunchAgents/com.dmitriy.truetone.plist`
-(`RunAtLoad`, `KeepAlive` only on crash). Prefs live in
-`~/Library/Preferences/com.dmitriy.truetone.plist`; `enabled` defaults to **on**.
-On quit / SIGTERM / SIGINT the calibrated gamma is restored — a killed process
-never leaves the Mi tinted. Errors go to `/tmp/truetone.log`.
+`install.sh` writes `~/Library/LaunchAgents/com.dmitriy.truetone.plist`
+(`RunAtLoad`, `KeepAlive` on crash only) and symlinks the `truetone` CLI into
+`/usr/local/bin`. Prefs: `~/Library/Preferences/com.dmitriy.truetone.plist`.
+Errors: `/tmp/truetone.log`. Env: `TRUETONE_DEBUG=1` (per-tick stderr),
+`TRUETONE_FORCE_ON=1`.
 
-Quick run without installing: `swift build && ./.build/debug/TrueTone`.
-Env: `TRUETONE_DEBUG=1` (per-tick stderr log), `TRUETONE_FORCE_ON=1` (start on).
+> **Debug gotcha.** `.build/debug/TrueTone` is unbundled, so it reads the
+> `TrueTone` defaults domain, *not* `com.dmitriy.truetone`. Verifying settings
+> against the wrong domain has already caused one false bug hunt. Test with the
+> installed `.app` binary.
 
-Menu: on/off switch · live readout with a warm↔cool scale · sections **Цвет**
-(Сила, Подстройка), **Яркость** (Как на MacBook, Яркость Mi) and **Приложение**
-(автозапуск, скрыть иконку). Menu-bar only, no Dock icon. A warning row and a
-struck-through glyph appear when the display, sensor or m1ddc is missing.
+Three ways in, because macOS Sequoia on this machine frequently refuses to draw
+third-party menu-bar items at all:
 
-### Brightness sync
+- **Menu-bar icon** — a half-filled ring; struck through when something is wrong.
+- **⌃⌥⌘T** — global hotkey (Carbon `RegisterEventHotKey`, no Accessibility need).
+- **Re-open the app** from Finder / Launchpad — it is single-instance, so a second
+  launch posts `com.dmitriy.truetone.reveal` and the running copy shows its menu.
+- **`truetone`** — `show | hide | toggle | on | off | <0-100> | bright on|off|<0-100> | status`.
+  Writes UserDefaults; `MenuBarController.reconcile()` picks changes up next tick.
 
-`Яркость как на MacBook` in the menu (or `truetone bright on`) drives the Mi's
-**real backlight** over DDC/CI so it follows the F1/F2 keys — it dims *and*
-brightens, with full contrast and no banding.
-
-Implementation note: an earlier attempt concluded this panel ignores DDC writes
-and faked it by scaling the gamma LUT. That was wrong — the bug was in a
-hand-rolled `IOAVServiceWriteI2C` frame (`0x51` was sent both as payload byte
-and as the I2C offset). `DDCBrightness.swift` now shells out to `m1ddc`
-(`brew install m1ddc`), which this monitor accepts.
-
-This monitor's MCU has been hung by tight DDC loops before, so writes are
-coalesced, at least 0.5 s apart, only sent on change, and skipped while the
-panel is asleep or absent; it is never read right after a write. The panel's own
-level is read once at startup and restored on quit.
-
-### Hiding / restoring the menu-bar icon
-
-`Скрыть иконку` in the menu hides it. To bring it back (any one of):
-
-- **Open TrueTone** from Finder / Launchpad / Spotlight — the app is
-  single-instance, so a second launch just tells the running one to show the
-  icon and open the menu (`main.swift` posts `com.dmitriy.truetone.reveal`,
-  the running instance calls `revealMenu()`). This is the primary way.
-- **⌃⌥⌘T** — global hotkey (Carbon `RegisterEventHotKey`, no Accessibility).
-- **`truetone`** command (symlinked to `/usr/local/bin` by `install.sh`):
-  `truetone show | hide | toggle | on | off | <0-100> | status`. Changes apply
-  within ~1 s (`MenuBarController.reconcile` polls UserDefaults each tick).
-
-Icon: `scripts/make-icon.swift` → `Resources/AppIcon.icns` (Finder / Launchpad),
-regenerated by `install.sh`.
-
-**Verified 2026-08-29:** enabled → Mi gamma top entry `R 1.000 / G 0.91 / B 0.78`
-(≈5560 K screen) at ambient `~4900 K @ 150 lx`; gamma-readback matches; SIGTERM
-restores identity.
-
-### Menu-bar icon note
-
-On the dev machine, macOS Sequoia has hidden **every** third-party menu-bar item
-(`defaults read com.apple.controlcenter` → `NSStatusItem Visible Item-* = 0`), not
-just this app's. The status item is created correctly (`button ok, isVisible
-true`); macOS just isn't drawing it. Bring hidden items back with:
+If every third-party icon is missing (not just this one), that's the OS:
 
 ```
 for i in $(seq 0 15); do defaults write com.apple.controlcenter "NSStatusItem Visible Item-$i" -bool true; done
 killall ControlCenter
 ```
 
-A menu-bar manager (e.g. Ice) is the durable fix if Sequoia keeps re-hiding them.
+A menu-bar manager (Ice) is the durable fix.
 
-### Tuning the curve
+---
 
-`WhitePointModel` defaults (deliberately gentle, like Apple): `maxAdapt 0.45`,
-`baseFrac 0.10`, `luxHigh 800` (full strength only in bright light),
-`floor 4300 K`, `tau 6 s`. At ~300 lx / 4200 K ambient this lands the screen
-near ~6000 K, not the ~4400 K the first cut produced.
+## The menu
 
-`Подстройка` in the menu (`Settings.trimK`, ±1000 K, 50 K steps) is a manual
-warmer/cooler bias on the final target — use it to match another display by eye.
-`swift run ttprobe --watch 30` shows raw sensor fields.
+```
+TrueTone                              [switch]
+external display
+⚠︎ <problem>                          (only when unhealthy)
+light 4400 K  →  screen 6100 K
+[■■■■▁▁▁▁▁]  warm↔cool scale, ▲ = room, ▮ = screen
+190 lx · brightness 63 %
+Color
+  Strength      100 %                 how much of the adaptation to apply
+  Trim              0                 manual ±1000 K bias, 50 K steps
+Brightness
+  ✓ Match MacBook                     backlight follows F1/F2 over DDC
+  Mi brightness  63 %                 manual level (disabled while matching)
+  Reset brightness match              only once calibrated
+App
+  ✓ Start at login
+  Hide icon
+Quit
+```
+
+Custom rows must use `kMenuTextInset` (21 pt) so they line up with native items,
+which indent past the checkmark column.
+
+---
+
+## How it works
+
+Two timers: colour at **0.5 s**, brightness at **0.12 s** (brightness visibly
+trailed the keys at 0.5 s; it only reads the built-in level, which is cheap).
+
+| File | Role |
+|---|---|
+| `AmbientSensor` | lux + ambient CCT from the ALS HID event |
+| `WhitePointModel` | ambient → target white point → per-channel gains |
+| `PanelProfile` | the external panel's real primaries, from its EDID |
+| `DisplayController` | writes gamma ramps; owns the display-reconfigure callback |
+| `BuiltinBrightness` | reads the MacBook's brightness (the F1/F2 value) |
+| `BrightnessMap` | built-in brightness → Mi luminance, via user anchors (pure) |
+| `DDCBrightness` | backlight over DDC, via `m1ddc`; locking, rate limits, timeout |
+| `MenuBarController` | the loop, the menu, health |
+| `LoginItem`, `HotKey`, `Settings` | small support pieces |
+| `Sources/ttprobe`, `Sources/ddcprobe` | hardware probes, dev tools — keep |
+
+### Colour
+
+Ambient CCT → partial adaptation from the panel's native white, in **mired**
+space, scaled by light level, exponentially smoothed. Defaults are deliberately
+gentle, like Apple: `maxAdapt 0.45`, `baseFrac 0.10`, `luxHigh 800` (full
+strength only in bright light), `floor 4300 K`, `tau 6 s`.
+
+`WhitePointModel.isReadingUsable` gates on **lux ≥ 4 and CCT ≥ 2500 K**; below
+that the model parks at the native white point and the menu says "too dark": the sensor's colour output is meaningless in the dark
+(it reads ~200 K) and adapting to it turned the screen orange.
+
+Gains are computed in the panel's **own primaries**, read from EDID — not sRGB.
+This monitor is wide-gamut (green at 0.2568 / 0.6748 against sRGB's 0.300 /
+0.600), so sRGB maths cut green and blue harder than the target needed: the
+screen ran warm by ~2 % at a 6000 K target and ~9 % at 4500 K. Its EDID white
+point is genuinely D65 (6515 K), so *that* assumption was fine.
+
+Gamma is colour-only. It is applied on top of whatever ramp is already loaded, so
+an ICC calibration survives.
+
+### Brightness
+
+Real backlight over DDC/CI, not a gamma fake. `DDCBrightness` shells out to
+**m1ddc** (`brew install m1ddc`, ~85 ms/write) because a hand-rolled
+`IOAVServiceWriteI2C` path is silently ignored by this panel — reads work, writes
+vanish. The bug was sending `0x51` both as the first payload byte and as the I2C
+offset; even after fixing that the panel still only accepted m1ddc's framing, so
+shelling out won over re-deriving the quirk.
+
+`m1ddc` calls carry a **3 s timeout** — a wedged MCU makes it never return, and
+without the timeout `readDataToEndOfFile()` blocks forever. All DDC work happens
+off the main thread; `isAvailable` is cache-only and never probes.
+
+**Calibration is implicit.** 1:1 (built-in 63 % → luminance 63) matches numbers
+but not the eye — different peak nits, and macOS's slider is perceptual while DDC
+luminance is a raw backlight scale. So: set the Mi by hand (dragging the slider
+switches matching off by itself), then switch **Match MacBook** back on. That
+records "at this MacBook level I wanted this much backlight". Do it again at a
+clearly different level and the second anchor gives the slope — which is why
+there are no min/max knobs. An explicit "Match now" button in a submenu was built
+and removed: it opened onto one disabled row demanding you go turn something else
+off first, and that precondition was invented anyway.
+
+---
+
+## Hardware findings
+
+**Ambient sensor** — STMicro **VD6286** CRGB colour ALS (`AppleSPUVD6286`, driver
+`com.apple.driver.AppleALSColorSensor`). Publishes a HID `AmbientLightSensor`
+event (**type 12**) on a vendor page (`PrimaryUsagePage 0xFF00`, usage 4, SPU).
+Unentitled, no TCC prompt:
+
+```
+client   = IOHIDEventSystemClientCreate(kCFAllocatorDefault)
+           IOHIDEventSystemClientSetMatching(client, NULL)     // NULL = match all
+services = IOHIDEventSystemClientCopyServices(client)
+ev       = IOHIDServiceClientCopyEvent(svc, 12, 0, 0)          // the ALS one answers
+value    = IOHIDEventGetFloatValue(ev, 0xC0000 + offset)
+```
+
+`+0x00` = lux, `+0x01…04` = raw channels, **`+0x0a` = CCT in Kelvin** — the clean
+signal, and what the model uses.
+
+**`+0x07` / `+0x08` are not chromaticity.** They track lux almost 1:1 (150 →
+151.7, 317 → 320.6). Real x/y would need reverse-engineering the 193-byte
+`CalibrationData` blob. This killed the idea of automatic tint correction.
+
+`AppleSPUVD6286` also exposes `CurrentLux` as a plain ioreg property (lux only).
+
+**Built-in brightness** — `DisplayServicesGetBrightness` works unentitled for the
+built-in panel. It refuses the external one (`CanChangeBrightness` → 0), as does
+`CoreDisplay_Display_SetUserBrightness`; DDC is the only route to the Mi.
+
+**The built-in panel's own True Tone is invisible to us** — Apple applies it in
+DCP, below CoreGraphics, so its gamma reads as identity. We can't mirror it; we
+compute our own from the same sensor.
+
+**Do not `dlopen` CoreBrightness in-process** — it destabilises the ObjC runtime.
+
+---
+
+## The recurring bug class
+
+**Anything resolved once at launch breaks after sleep/wake or a late-appearing
+display.** This has bitten three times: `PanelProfile`, the DDC display index,
+and `AmbientSensor`'s HID service pointer. The LaunchAgent starts at login but
+the Mi needs ~10 s after a wake (`~/.monitor_hook.log`: displaywakeup 14:27:27 →
+ok 14:27:37), so a one-shot lookup silently leaves the app half-dead until the
+next manual restart — colour falls back to sRGB maths, brightness sync stops.
+
+Everything panel-dependent now: resolves on demand, latches **only on success**,
+re-resolves from `CGDisplayRegisterReconfigurationCallback`, and retries from the
+tick. `DisplayController.invalidateBaseline()` also drops cached base ramps, or a
+sleep/reconnect could re-capture a base that already had our tint on it and
+compound the shift every cycle.
+
+If you add anything that reads the panel, follow the same pattern.
+
+---
 
 ## Tests
 
-```
-swift test
-```
+`swift test` — pure maths only (`WhitePointModel`, `PanelProfile`,
+`BrightnessMap`), no hardware. The point is regression cover: the colour path
+shipped wrong **twice, silently**, and both failures are pinned.
+`warmRoomWarmsTheScreenButOnlyPartway` catches the over-aggressive curve;
+`wideGamutPanelNeedsLessCutThanSRGBMath` catches sRGB maths on this panel.
 
-Pure colour maths only (`WhitePointModel`, `PanelProfile`) — no hardware needed.
-The point is regression cover: this path shipped wrong twice, silently, and both
-failures are pinned. Reintroducing either turns the suite red —
-`warmRoomWarmsTheScreenButOnlyPartway` catches the over-aggressive curve (it
-lands at 4435 K instead of ~6000 K), and `wideGamutPanelNeedsLessCutThanSRGBMath`
-catches computing gains with the sRGB matrix on this panel.
+Colour bugs here do not crash — they just look slightly wrong. Add a test for
+anything you change in the maths.
 
-## App design (v1)
+---
 
-Menu-bar app (`LSUIElement` / `.accessory`), 2 Hz loop:
+## State
 
-1. **AmbientSensor** — read `lux` + ambient `CCT` from the ALS event (above),
-   with the ioreg `CurrentLux` fallback.
-2. **WhitePointModel** — ambient → target display white:
-   - partial adaptation from D65 (6500 K) toward ambient CCT, in mired space;
-   - adaptation fraction scales with lux (less in dim light) and an Intensity
-     setting; hard floor ~4000 K so it never goes orange;
-   - exponential time-smoothing (τ ≈ 5–15 s) + dead-band → calm, True-Tone-like.
-3. **DisplayController** — target CCT → per-channel gains (≤ 1.0), applied to the
-   Mi via `CGSetDisplayTransferByTable`; re-apply on display-reconfig / wake;
-   restore identity on disable / quit.
-4. **MenuBarController** — on/off, Сила / Подстройка / Яркость sliders, live readout
-   ("ambient 4900 K → display 5800 K · 150 lx"), 10 s test sweep, launch-at-login.
-5. **Settings** — `UserDefaults`.
+**Verified on hardware:** DDC backlight (built-in 62.5 % → Mi 63), panel-primary
+gains (B 0.958 → 0.974), lock cooperation (write skipped while held, applied on
+release), late-resolution recovery (`origLum` — → 58), menu layout and English
+strings, 28 tests.
 
-Not in v1: DDC/CI, camera colour, driving the built-in display, CoreBrightness
-toggle, per-lighting calibration profiles.
+**Written but never exercised:** the health/warning states (would need unplugging
+the monitor or removing m1ddc), the sleep/wake re-resolution paths, sensor
+re-creation, the struck-through icon in a live menu bar, and — most importantly —
+**implicit brightness calibration**, which addresses the owner's original
+complaint and has not yet been used in anger.
+
+**Open, deliberately:** tint (green↔magenta) correction — the last real colour
+gap, repeatedly offered and declined, and hard because the sensor doesn't expose
+chromaticity. `truetone status` still prints two Russian lines.
+
+**Known and unfixed, low priority:** `cachedIndex` is read on main and written on
+the DDC queue (benign-ish race); `apply()` re-uploads the whole gamma table each
+tick even when unchanged; `invalidateBaseline()` shows one untinted tick on
+reconfigure; `reconcile()`'s `lastSynced*` start at defaults so the first tick
+always reports a change; the single-instance check is theoretically racy.
+
+---
 
 ## Layout
 
 ```
 Sources/
-  ttprobe/          hardware-discovery probe (dev tool, keep)
-  TrueTone/         the app
+  TrueTone/     the app
+  ttprobe/      ambient sensor + display probe   (swift run ttprobe --watch 20)
+  ddcprobe/     DDC + brightness-API probe       (swift run ddcprobe)
+Tests/TrueToneTests/
+scripts/        install.sh · uninstall.sh · truetone (CLI) · make-icon.swift
+Resources/      Info.plist · AppIcon.icns
 ```
