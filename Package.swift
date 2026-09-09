@@ -28,5 +28,10 @@ let package = Package(
                 .linkedFramework("Foundation"),
             ]
         ),
+        .testTarget(
+            name: "TrueToneTests",
+            dependencies: ["TrueTone"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

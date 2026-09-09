@@ -1,7 +1,7 @@
 # TrueTone
 
 A personal macOS menu-bar app that reproduces Apple's **True Tone** on an
-**external monitor** (Xiaomi "Mi Monitor", 5K), driven by the MacBook's own
+**external monitor** (Xiaomi "Mi Monitor"), driven by the MacBook's own
 ambient-light sensor.
 
 Target machine: MacBook Air M3 (`Mac15,12`), macOS 15.7.2, Apple Silicon.
@@ -90,8 +90,10 @@ never leaves the Mi tinted. Errors go to `/tmp/truetone.log`.
 Quick run without installing: `swift build && ./.build/debug/TrueTone`.
 Env: `TRUETONE_DEBUG=1` (per-tick stderr log), `TRUETONE_FORCE_ON=1` (start on).
 
-Menu: on/off switch · live readout (+ tint swatch) · **Сила** slider (0–100 %) ·
-Автозапуск при входе · Скрыть иконку · Выйти. Menu-bar only, no Dock icon.
+Menu: on/off switch · live readout with a warm↔cool scale · sections **Цвет**
+(Сила, Подстройка), **Яркость** (Как на MacBook, Яркость Mi) and **Приложение**
+(автозапуск, скрыть иконку). Menu-bar only, no Dock icon. A warning row and a
+struck-through glyph appear when the display, sensor or m1ddc is missing.
 
 ### Brightness sync
 
@@ -155,9 +157,22 @@ near ~6000 K, not the ~4400 K the first cut produced.
 warmer/cooler bias on the final target — use it to match another display by eye.
 `swift run ttprobe --watch 30` shows raw sensor fields.
 
+## Tests
+
+```
+swift test
+```
+
+Pure colour maths only (`WhitePointModel`, `PanelProfile`) — no hardware needed.
+The point is regression cover: this path shipped wrong twice, silently, and both
+failures are pinned. Reintroducing either turns the suite red —
+`warmRoomWarmsTheScreenButOnlyPartway` catches the over-aggressive curve (it
+lands at 4435 K instead of ~6000 K), and `wideGamutPanelNeedsLessCutThanSRGBMath`
+catches computing gains with the sRGB matrix on this panel.
+
 ## App design (v1)
 
-Menu-bar app (`LSUIElement` / `.accessory`), ~1 Hz loop:
+Menu-bar app (`LSUIElement` / `.accessory`), 2 Hz loop:
 
 1. **AmbientSensor** — read `lux` + ambient `CCT` from the ALS event (above),
    with the ioreg `CurrentLux` fallback.
@@ -169,7 +184,7 @@ Menu-bar app (`LSUIElement` / `.accessory`), ~1 Hz loop:
 3. **DisplayController** — target CCT → per-channel gains (≤ 1.0), applied to the
    Mi via `CGSetDisplayTransferByTable`; re-apply on display-reconfig / wake;
    restore identity on disable / quit.
-4. **MenuBarController** — on/off, Intensity slider, live readout
+4. **MenuBarController** — on/off, Сила / Подстройка / Яркость sliders, live readout
    ("ambient 4900 K → display 5800 K · 150 lx"), 10 s test sweep, launch-at-login.
 5. **Settings** — `UserDefaults`.
 
