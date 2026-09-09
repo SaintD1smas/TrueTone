@@ -11,6 +11,10 @@ final class DisplayController {
     private var base: [CGDirectDisplayID: Ramp] = [:]
     private var tinted = false
 
+    /// Called when displays are added / removed / re-enabled, so the owner can
+    /// re-resolve anything it looked up once at launch.
+    var onDisplaysChanged: (() -> Void)?
+
     init() {
         // A previous run may have died while tinted; start from the clean
         // calibrated state so the captured base ramps are correct.
@@ -42,6 +46,8 @@ final class DisplayController {
         base.removeAll()
         CGDisplayRestoreColorSyncSettings()
         tinted = false
+        DDCBrightness.displaysChanged()
+        onDisplaysChanged?()
     }
 
     /// External (non-built-in) online displays — the Mi Monitor, in practice.

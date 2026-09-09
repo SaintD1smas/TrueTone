@@ -38,14 +38,18 @@ final class MenuBarController: NSObject {
     private var lastSyncedBright = false
     private var lastSyncedManual = 100
 
+    // The startup luminance read can fail transiently — a read right after a
+    // write returns an error on this panel, and the previous instance writes on
+    // its way out. Retry a few times, spaced out, instead of giving up.
+    private var lumProbeAt: Date = .distantPast
+    private var lumProbes = 0
+
     override init() {
         super.init()
         model.intensity = Double(settings.intensityPercent) / 100.0
         model.trimK = Double(settings.trimK)
-        if let profile = PanelProfile.forExternalDisplay() {
-            model.panel = profile
-            model.nativeCCT = profile.nativeCCT
-        }
+        display.onDisplaysChanged = { [weak self] in self?.resolvePanel() }
+        resolvePanel()
         // Stable identity so macOS tracks this item's visibility by name.
         statusItem.autosaveName = "com.dmitriy.truetone.status"
         buildMenu()
@@ -61,12 +65,6 @@ final class MenuBarController: NSObject {
 
         if sensor == nil { readout.message("⚠️ датчик света недоступен") }
 
-        // Remember the panel's own backlight level once, while nothing is writing
-        // (reads right after a write come back as errors on this monitor).
-        originalLuminance = DDCBrightness.read()
-        if settings.manualBrightnessPercent == 100, let o = originalLuminance {
-            settings.manualBrightnessPercent = o
-        }
 
         lastTick = Date()
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -185,6 +183,27 @@ final class MenuBarController: NSObject {
         settings.intensityPercent = pct
         model.intensity = Double(pct) / 100.0
         tick()
+    }
+
+    /// Read whatever depends on the external panel actually being attached. The
+    /// app autostarts at login and the Mi can take ~10 s to appear, so this must
+    /// be re-runnable — doing it once at init left the colour math on the sRGB
+    /// fallback and brightness sync dead after every reboot.
+    private func resolvePanel() {
+        if let profile = PanelProfile.forExternalDisplay() {
+            model.panel = profile
+            model.nativeCCT = profile.nativeCCT
+        }
+        if originalLuminance == nil, let level = DDCBrightness.read() {
+            originalLuminance = level
+            if settings.manualBrightnessPercent == 100 {
+                settings.manualBrightnessPercent = level
+            }
+        }
+        log(String(format: "[resolve] panel native=%.0fK ddc=%@ origLum=%@",
+                   model.nativeCCT,
+                   DDCBrightness.isAvailable ? "ok" : "нет",
+                   originalLuminance.map(String.init) ?? "—"))
     }
 
     private func setTrim(_ k: Int) {
@@ -310,6 +329,13 @@ final class MenuBarController: NSObject {
         lastTick = now
 
         reconcile()
+
+        if originalLuminance == nil, lumProbes < 8,
+           now.timeIntervalSince(lumProbeAt) > 3 {
+            lumProbeAt = now
+            lumProbes += 1
+            resolvePanel()
+        }
 
         let reading = sensor?.read()
         let ttActive = isEnabled && reading != nil

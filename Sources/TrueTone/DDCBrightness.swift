@@ -25,17 +25,29 @@ enum DDCBrightness {
     }()
 
     /// Index of the external monitor in `m1ddc display list` (the first named one).
-    private static let displayIndex: String? = {
-        guard let out = run(["display", "list"]) else { return nil }
-        for line in out.split(separator: "\n") {
+    ///
+    /// Resolved lazily and *not* latched on failure: the app autostarts at login
+    /// and the Mi can take ~10 s to come up, so a one-shot `static let` here left
+    /// brightness sync permanently dead after every reboot.
+    nonisolated(unsafe) private static var cachedIndex: String?
+
+    private static var displayIndex: String? {
+        if let cachedIndex { return cachedIndex }
+        guard displayReady else { return nil }      // don't probe with no panel attached
+        for line in (run(["display", "list"]) ?? "").split(separator: "\n") {
             // "[1] Mi Monitor (UUID)"  — skip "(null)" entries
             guard let close = line.firstIndex(of: "]"), line.hasPrefix("[") else { continue }
             let idx = String(line[line.index(after: line.startIndex)..<close])
             let rest = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
-            if !rest.hasPrefix("(null)") { return idx }
+            if !rest.hasPrefix("(null)") { cachedIndex = idx; return idx }
         }
         return nil
-    }()
+    }
+
+    /// Forget the resolved display (call when the display set changes).
+    static func displaysChanged() {
+        queue.async { cachedIndex = nil; lastWritten = nil; pending = nil }
+    }
 
     static var isAvailable: Bool { binary != nil && displayIndex != nil }
 
@@ -139,6 +151,4 @@ enum DDCBrightness {
         lastWriteAt = Date()
     }
 
-    /// Forget our cached state (so the next set() definitely writes).
-    static func forget() { queue.async { lastWritten = nil; pending = nil } }
 }
