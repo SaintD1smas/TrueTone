@@ -119,8 +119,13 @@ final class SliderRow: NSView {
     /// Snap the value to this increment (the trim slider moves in 50 K steps).
     var step = 1
 
+    /// `bipolar` marks the neutral point. Hiding the accent fill would be the
+    /// nicer answer — on a centred control a bar growing from the left edge reads
+    /// as a quantity — but `trackFillColor` paints a dark bar whatever colour it
+    /// is given, so instead the midpoint is ticked and the half-filled track
+    /// reads as "middle of the range".
     init(title: String, min: Double, max: Double, hint: String? = nil,
-         format: @escaping (Int) -> String) {
+         bipolar: Bool = false, format: @escaping (Int) -> String) {
         self.caption = NSTextField(labelWithString: title)
         self.slider = NSSlider(value: min, minValue: min, maxValue: max, target: nil, action: nil)
         self.hint = hint.map { NSTextField(labelWithString: $0) }
@@ -137,6 +142,14 @@ final class SliderRow: NSView {
         value.frame = NSRect(x: kMenuWidth - 16 - 96, y: top, width: 96, height: 16)
         slider.frame = NSRect(x: 14, y: top - 26, width: kMenuWidth - 28, height: 20)
         slider.isContinuous = true
+        // A centred control shouldn't grow a bar from the left edge — the knob
+        // position carries the value. .clear renders black and the label greys are
+        // all darker than the groove, so match the groove explicitly per theme.
+        if bipolar {
+            slider.numberOfTickMarks = 3          // ends + the neutral midpoint
+            slider.tickMarkPosition = .below
+            slider.allowsTickMarkValuesOnly = false
+        }
         slider.target = self
         slider.action = #selector(changed)
         addSubview(caption); addSubview(value); addSubview(slider)
@@ -151,8 +164,9 @@ final class SliderRow: NSView {
     required init?(coder: NSCoder) { nil }
 
     func set(_ v: Int) {
-        slider.doubleValue = Double(v)
-        value.stringValue = format(v)
+        let snapped = step > 1 ? (v / step) * step : v
+        slider.doubleValue = Double(snapped)
+        value.stringValue = format(snapped)
     }
     func setEnabled(_ on: Bool) {
         slider.isEnabled = on

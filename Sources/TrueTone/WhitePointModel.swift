@@ -54,10 +54,15 @@ struct WhitePointModel {
 
     // MARK: adaptation curve
 
+    /// Below a few lux the sensor's colour reading is meaningless — it reports a
+    /// few hundred Kelvin. Callers use this to avoid presenting that as fact.
+    func isReadingUsable(lux: Double, ambientCCT: Double) -> Bool {
+        lux >= 4 && ambientCCT >= 2500
+    }
+
     private func targetMired(lux: Double, ambientCCT: Double) -> Double {
-        // Below a few lux the sensor's CCT is unreliable (reads implausibly low).
-        // Don't guess — sit at the native white point.
-        if lux < 4 || ambientCCT < 2500 { return 1_000_000 / nativeCCT }
+        // Nothing trustworthy to adapt to — sit at the native white point.
+        if !isReadingUsable(lux: lux, ambientCCT: ambientCCT) { return 1_000_000 / nativeCCT }
 
         let ambient = min(max(ambientCCT, 3500), 10_000)
         let luxT = smoothstep(lux, luxLow, luxHigh)

@@ -41,7 +41,7 @@ final class MenuBarController: NSObject {
     private let scale = ScaleView()
     private let strength = SliderRow(title: "Сила", min: 0, max: 100) { "\($0) %" }
     private let trim = SliderRow(title: "Подстройка", min: -1000, max: 1000,
-                                 hint: "← теплее   ·   холоднее →") { k in
+                                 hint: "← теплее   ·   холоднее →", bipolar: true) { k in
         k == 0 ? "0" : (k < 0 ? "теплее \(-k) K" : "холоднее \(k) K")
     }
     private let brightness = SliderRow(title: "Яркость Mi", min: 0, max: 100) { "\($0) %" }
@@ -51,6 +51,7 @@ final class MenuBarController: NSObject {
     private let brightnessToggle = NSMenuItem(title: "Как на MacBook", action: nil, keyEquivalent: "")
     private let calibrateItem = NSMenuItem(title: "Совместить сейчас", action: nil, keyEquivalent: "")
     private let calibrationInfo = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let calibrationReset = NSMenuItem(title: "Сбросить калибровку", action: nil, keyEquivalent: "")
 
     /// How MacBook brightness maps onto the Mi's backlight.
     private var brightnessMap = BrightnessMap()
@@ -156,6 +157,11 @@ final class MenuBarController: NSObject {
         calibrationInfo.indentationLevel = 1
         menu.addItem(calibrationInfo)
 
+        calibrationReset.target = self
+        calibrationReset.action = #selector(resetCalibration)
+        calibrationReset.indentationLevel = 1
+        menu.addItem(calibrationReset)
+
         menu.addItem(.sectionHeader(title: "Приложение"))
         loginToggle.target = self
         loginToggle.action = #selector(toggleLogin)
@@ -191,9 +197,15 @@ final class MenuBarController: NSObject {
         brightnessToggle.state = settings.syncBrightness ? .on : .off
         brightnessToggle.isEnabled = DDCBrightness.isAvailable
         brightness.setEnabled(!settings.syncBrightness && DDCBrightness.isAvailable)
-        calibrateItem.isEnabled = DDCBrightness.isAvailable
+        // Recording an anchor while sync drives the panel would just re-affirm the
+        // current line — and could displace a good anchor. Calibrate with sync off.
+        calibrateItem.isEnabled = DDCBrightness.isAvailable && !settings.syncBrightness
+        calibrateItem.toolTip = settings.syncBrightness
+            ? "Сначала выключи «Как на MacBook» и подгони ползунком"
+            : "Запомнить, что сейчас экраны совпадают. Повтори на другой яркости MacBook."
         calibrationInfo.title = brightnessMap.summary
         calibrationInfo.isHidden = !brightnessMap.isCalibrated
+        calibrationReset.isHidden = !brightnessMap.isCalibrated
         if !settings.syncBrightness { brightness.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
@@ -314,6 +326,12 @@ final class MenuBarController: NSObject {
         settings.brightnessMap = brightnessMap
         refreshUI()
         log("[calib] \(brightnessMap.summary)")
+    }
+
+    @objc private func resetCalibration() {
+        brightnessMap.reset()
+        settings.brightnessMap = brightnessMap
+        refreshUI()
     }
 
     /// Dragging the manual slider takes over from the MacBook sync.
@@ -492,9 +510,15 @@ final class MenuBarController: NSObject {
         if let rd = reading {
             var detail = String(format: "%.0f lx", rd.lux)
             if let lum = miLuminance { detail += String(format: "   ·   яркость %d %%", lum) }
-            scale.update(ambientK: rd.cct, screenK: model.displayCCT, detail: detail,
-                         caption: String(format: "свет %.0f K  →  экран %.0f K",
-                                         rd.cct, model.displayCCT))
+            // In the dark the sensor's colour reading is nonsense (a few hundred
+            // Kelvin) — say so rather than printing it as if it meant something.
+            let usable = model.isReadingUsable(lux: rd.lux, ambientCCT: rd.cct)
+            scale.update(ambientK: usable ? rd.cct : nil,
+                         screenK: model.displayCCT,
+                         detail: detail,
+                         caption: usable
+                            ? String(format: "свет %.0f K  →  экран %.0f K", rd.cct, model.displayCCT)
+                            : String(format: "слишком темно  ·  экран %.0f K", model.displayCCT))
         }
 
         log(String(format: "tt=on  mi-lum=%@  gains %.3f/%.3f/%.3f",
