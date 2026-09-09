@@ -50,6 +50,33 @@ enum DDCBrightness {
         return CGDisplayIsActive(ext) != 0 && CGDisplayIsAsleep(ext) == 0
     }
 
+    /// The same mutex ~/.monitor_ddc.zsh uses (`mkdir` on a directory is atomic).
+    /// The wake-repair scripts take it before touching DDC precisely because
+    /// concurrent access wedges this monitor's MCU — so we take it too, and just
+    /// skip the write if they hold it. A write is ~85 ms, so we never block them
+    /// for long; the next tick retries.
+    private static let lockURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".monitor_hook.lock")
+    private static let lockStaleAfter: TimeInterval = 25
+
+    private static func withLock<T>(_ body: () -> T) -> T? {
+        let fm = FileManager.default
+        func grab() -> Bool {
+            (try? fm.createDirectory(at: lockURL, withIntermediateDirectories: false)) != nil
+        }
+        if !grab() {
+            // Same staleness rule as the shell helper, so a crashed script can't
+            // lock us out forever.
+            let age = (try? fm.attributesOfItem(atPath: lockURL.path)[.modificationDate] as? Date)
+                .flatMap { $0 }.map { Date().timeIntervalSince($0) } ?? 0
+            guard age > lockStaleAfter else { return nil }
+            try? fm.removeItem(at: lockURL)
+            guard grab() else { return nil }
+        }
+        defer { try? fm.removeItem(at: lockURL) }
+        return body()
+    }
+
     @discardableResult
     private static func run(_ args: [String]) -> String? {
         guard let binary else { return nil }
@@ -68,8 +95,8 @@ enum DDCBrightness {
     /// Read the panel's current luminance. Only safe to call when idle — reads
     /// right after a write come back as errors. Used once, at startup.
     static func read() -> Int? {
-        guard displayReady, let idx = displayIndex,
-              let out = run(["display", idx, "get", "luminance"]),
+        guard displayReady, let idx = displayIndex else { return nil }
+        guard let out = withLock({ run(["display", idx, "get", "luminance"]) }) ?? nil,
               let v = Int(out), (0...100).contains(v)
         else { return nil }
         return v
@@ -96,7 +123,8 @@ enum DDCBrightness {
 
     private static func write(_ v: Int) {
         guard let idx = displayIndex, v != lastWritten, displayReady else { return }
-        _ = run(["display", idx, "set", "luminance", String(v)])
+        // If the wake-repair scripts hold the lock, skip — the next tick retries.
+        guard withLock({ run(["display", idx, "set", "luminance", String(v)]) }) != nil else { return }
         lastWritten = v
         lastWriteAt = Date()
     }
@@ -106,7 +134,7 @@ enum DDCBrightness {
     static func setNow(_ value: Int) {
         let v = min(max(value, 0), 100)
         guard let idx = displayIndex else { return }
-        _ = run(["display", idx, "set", "luminance", String(v)])
+        _ = withLock { run(["display", idx, "set", "luminance", String(v)]) }
         lastWritten = v
         lastWriteAt = Date()
     }
