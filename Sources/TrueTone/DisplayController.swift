@@ -11,10 +11,6 @@ final class DisplayController {
     private var base: [CGDirectDisplayID: Ramp] = [:]
     private var tinted = false
 
-    /// 0…1 overall dim applied on top of the colour tint (brightness sync — the
-    /// Mi ignores hardware brightness control, so we scale its gamma instead).
-    var brightness: Double = 1.0
-
     init() {
         // A previous run may have died while tinted; start from the clean
         // calibrated state so the captured base ramps are correct.
@@ -55,7 +51,6 @@ final class DisplayController {
     /// safe to call every tick, which also re-asserts the ramp after the OS
     /// resets it on wake / display reconfiguration.
     func apply(r rGain: Double, g gGain: Double, b bGain: Double) {
-        let dim = min(max(brightness, 0.05), 1.0)
         for id in externalDisplays() {
             let base = baseRamp(for: id)
             let n = base.r.count
@@ -63,9 +58,9 @@ final class DisplayController {
             var g = [CGGammaValue](repeating: 0, count: n)
             var b = [CGGammaValue](repeating: 0, count: n)
             for i in 0..<n {
-                r[i] = CGGammaValue(Double(base.r[i]) * rGain * dim)
-                g[i] = CGGammaValue(Double(base.g[i]) * gGain * dim)
-                b[i] = CGGammaValue(Double(base.b[i]) * bGain * dim)
+                r[i] = CGGammaValue(Double(base.r[i]) * rGain)
+                g[i] = CGGammaValue(Double(base.g[i]) * gGain)
+                b[i] = CGGammaValue(Double(base.b[i]) * bGain)
             }
             CGSetDisplayTransferByTable(id, UInt32(n), &r, &g, &b)
         }
@@ -78,7 +73,6 @@ final class DisplayController {
         CGDisplayRestoreColorSyncSettings()
         base.removeAll()
         tinted = false
-        brightness = 1.0
     }
 
     var isTinted: Bool { tinted }

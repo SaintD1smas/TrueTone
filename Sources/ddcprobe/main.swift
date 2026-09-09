@@ -92,32 +92,41 @@ func ddcCurrent(_ vcp: UInt8) -> (cur: Int, max: Int)? {
     return nil
 }
 
-func ddcWrite(_ vcp: UInt8, _ value: Int, retries: Int = 4) {
+/// Correct DDC/CI "Set VCP" framing (this is what m1ddc does, and what my first
+/// attempt got wrong): the 0x51 source address is the I2C *offset* and goes into
+/// the checksum — it must NOT also be the first byte of the payload.
+func ddcWrite(_ vcp: UInt8, _ value: Int) {
     let hi = UInt8((value >> 8) & 0xFF), lo = UInt8(value & 0xFF)
-    var msg: [UInt8] = [0x51, 0x84, 0x03, vcp, hi, lo]
-    var chk: UInt8 = 0x6E; for b in msg { chk ^= b }; msg.append(chk)
-    for _ in 0..<retries {
-        usleep(40_000)
-        let w = writeI2C(av, 0x37, 0x51, &msg, UInt32(msg.count))
-        usleep(50_000)
-        _ = w
+    var msg: [UInt8] = [0x84, 0x03, vcp, hi, lo]
+    var chk: UInt8 = 0x6E ^ 0x51
+    for b in msg { chk ^= b }
+    msg.append(chk)
+    // m1ddc repeats the frame a couple of times ~10 ms apart; a single frame
+    // isn't enough for this panel. Still far gentler than a polling loop.
+    var w: Int32 = -1
+    for _ in 0..<3 {
+        usleep(10_000)
+        w = writeI2C(av, 0x37, 0x51, &msg, UInt32(msg.count))
     }
-    print("   wrote VCP 0x\(String(vcp, radix: 16)) = \(value) (x\(retries))")
+    print("   wrote VCP 0x\(String(vcp, radix: 16)) = \(value)  ret=\(w)")
 }
 
 print("\n-- DDC reads --")
 for _ in 0..<3 { ddcRead(0x10); usleep(100_000) }
 
-print("\n-- DDC write test (set brightness to 40, then restore) --")
+// One write, 3 s pause, one read — hammering this monitor's MCU has hung it before.
+print("\n-- DDC write test (set brightness to 45, then restore) --")
 if let (cur, maxV) = ddcCurrent(0x10) {
     print("   before: \(cur)/\(maxV)")
-    ddcWrite(0x10, 40)
-    usleep(600_000)
+    sleep(3)
+    ddcWrite(0x10, 45)
+    sleep(3)
     if let (after, _) = ddcCurrent(0x10) {
-        print("   after write: \(after)   \(after == 40 ? "✅ WRITE WORKS" : "❌ ignored — DDC/CI writes likely disabled in the monitor's OSD menu")")
+        print("   after write: \(after)   \(after == 45 ? "✅ WRITE WORKS" : "❌ ignored")")
     }
+    sleep(3)
     ddcWrite(0x10, cur)
-    usleep(400_000)
+    sleep(3)
     if let (r, _) = ddcCurrent(0x10) { print("   restored: \(r)") }
 } else {
     print("   couldn't read current brightness")

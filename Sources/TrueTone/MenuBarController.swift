@@ -26,7 +26,9 @@ final class MenuBarController: NSObject {
     private let brightnessSlider = BrightnessView()
     private let loginToggle = NSMenuItem(title: "Автозапуск при входе", action: nil, keyEquivalent: "")
     private let brightnessToggle = NSMenuItem(title: "Яркость как на MacBook", action: nil, keyEquivalent: "")
-    private let anchorItem = NSMenuItem(title: "Совместить яркость сейчас", action: nil, keyEquivalent: "")
+
+    /// The Mi's own luminance before we touched it — restored on quit.
+    private var originalLuminance: Int?
     private let menuBarToggle = NSMenuItem(title: "Скрыть иконку", action: nil, keyEquivalent: "")
 
     private var lastSyncedEnabled = false
@@ -54,6 +56,13 @@ final class MenuBarController: NSObject {
             name: .init("com.dmitriy.truetone.reveal"), object: nil)
 
         if sensor == nil { readout.message("⚠️ датчик света недоступен") }
+
+        // Remember the panel's own backlight level once, while nothing is writing
+        // (reads right after a write come back as errors on this monitor).
+        originalLuminance = DDCBrightness.read()
+        if settings.manualBrightnessPercent == 100, let o = originalLuminance {
+            settings.manualBrightnessPercent = o
+        }
 
         lastTick = Date()
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -84,14 +93,12 @@ final class MenuBarController: NSObject {
 
         brightnessToggle.target = self
         brightnessToggle.action = #selector(toggleBrightnessSync)
-        brightnessToggle.toolTip = "Mi не даёт менять яркость по кабелю — гасим через гамму вслед за клавишами яркости MacBook"
+        brightnessToggle.toolTip = "Подсветка Mi едет за клавишами яркости MacBook (по DDC)"
+        if !DDCBrightness.isAvailable {
+            brightnessToggle.isEnabled = false
+            brightnessToggle.toolTip = "нужен m1ddc: brew install m1ddc"
+        }
         menu.addItem(brightnessToggle)
-
-        anchorItem.target = self
-        anchorItem.action = #selector(anchorBrightness)
-        anchorItem.indentationLevel = 1
-        anchorItem.toolTip = "Запомнить текущую яркость MacBook как уровень, где Mi не приглушается"
-        menu.addItem(anchorItem)
 
         loginToggle.target = self
         loginToggle.action = #selector(toggleLogin)
@@ -125,7 +132,6 @@ final class MenuBarController: NSObject {
         strength.set(settings.intensityPercent)
         trim.set(settings.trimK)
         brightnessToggle.state = settings.syncBrightness ? .on : .off
-        anchorItem.isHidden = !settings.syncBrightness
         brightnessSlider.setEnabled(!settings.syncBrightness)
         if !settings.syncBrightness { brightnessSlider.set(settings.manualBrightnessPercent) }
         loginToggle.state = LoginItem.isEnabled ? .on : .off
@@ -185,17 +191,11 @@ final class MenuBarController: NSObject {
 
     @objc private func toggleBrightnessSync() {
         settings.syncBrightness.toggle()
-        settings.brightnessRefPercent = 0        // re-anchor fresh on the next tick
-        refreshUI()
-        tick()
-    }
-
-    /// Remember the MacBook's current brightness as the level where the Mi is
-    /// left alone — it only dims when the MacBook goes below this.
-    @objc private func anchorBrightness() {
-        if let bb = BuiltinBrightness.read() {
-            settings.brightnessRefPercent = max(1, Int((bb * 100).rounded()))
+        if !settings.syncBrightness, let o = originalLuminance {
+            settings.manualBrightnessPercent = o        // hand control back at the panel's own level
+            DDCBrightness.set(o)
         }
+        refreshUI()
         tick()
     }
 
@@ -247,7 +247,10 @@ final class MenuBarController: NSObject {
         NSApp.terminate(nil)
     }
 
-    func shutdown() { display.restore() }
+    func shutdown() {
+        display.restore()
+        if let o = originalLuminance { DDCBrightness.setNow(o) }
+    }
 
     private func installSignalHandlers() {
         signal(SIGHUP, SIG_IGN)
@@ -255,7 +258,7 @@ final class MenuBarController: NSObject {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             src.setEventHandler { [weak self] in
-                self?.display.restore()
+                self?.shutdown()
                 exit(0)
             }
             src.resume()
@@ -286,8 +289,7 @@ final class MenuBarController: NSObject {
             model.intensity = Double(settings.intensityPercent) / 100.0
             model.trimK = Double(settings.trimK)
             if settings.enabled != lastSyncedEnabled { model.resetToNative() }
-            let brightActive = settings.syncBrightness || settings.manualBrightnessPercent < 100
-            if !isEnabled && !brightActive { display.restore() }
+            if !isEnabled { display.restore() }   // colour only; brightness is DDC now
             refreshUI()
             lastSyncedEnabled = settings.enabled
             lastSyncedMenuBar = settings.showInMenuBar
@@ -307,26 +309,21 @@ final class MenuBarController: NSObject {
 
         let reading = sensor?.read()
         let ttActive = isEnabled && reading != nil
-        let manualDim = settings.manualBrightnessPercent < 100
-        let brightActive = settings.syncBrightness || manualDim
 
-        // Brightness factor: follow the MacBook, or the manual "Яркость Mi" slider.
-        if settings.syncBrightness {
-            let bb = BuiltinBrightness.read() ?? 1.0
-            if settings.brightnessRefPercent == 0 {              // self-anchor on first tick
-                settings.brightnessRefPercent = max(1, Int((bb * 100).rounded()))
-            }
-            let ref = Double(settings.brightnessRefPercent) / 100.0
-            let floor = Double(settings.brightnessFloorPercent) / 100.0
-            display.brightness = min(max(bb / max(ref, 0.05), floor), 1.0)
-            brightnessSlider.set(Int((display.brightness * 100).rounded()))   // reflect on the disabled slider
-        } else if manualDim {
-            display.brightness = 0.10 + 0.90 * Double(settings.manualBrightnessPercent) / 100.0
-        } else {
-            display.brightness = 1.0
+        // --- real backlight over DDC (not a gamma fake) ---
+        var miLuminance: Int?
+        if settings.syncBrightness, let bb = BuiltinBrightness.read() {
+            let target = min(max(Int((bb * 100).rounded()), 5), 100)
+            DDCBrightness.set(target)
+            miLuminance = target
+            brightnessSlider.set(target)          // reflect on the disabled slider
+        } else if !settings.syncBrightness {
+            let target = settings.manualBrightnessPercent
+            DDCBrightness.set(target)
+            miLuminance = target
         }
 
-        guard ttActive || brightActive else {
+        guard ttActive else {
             if display.isTinted { display.restore() }
             readout.message(isEnabled && reading == nil
                 ? "⚠️ нет данных с датчика"
@@ -335,25 +332,22 @@ final class MenuBarController: NSObject {
         }
 
         var g = (r: 1.0, g: 1.0, b: 1.0)
-        if ttActive, let rd = reading {
+        if let rd = reading {
             model.update(lux: rd.lux, ambientCCT: rd.cct, dt: dt)
             g = model.rgbGains()
         }
         display.apply(r: g.r, g: g.g, b: g.b)
 
-        let brightPct = brightActive ? display.brightness : nil
         if let rd = reading {
             readout.update(ambientK: rd.cct,
-                           screenK: ttActive ? model.displayCCT : nativeCCT,
+                           screenK: model.displayCCT,
                            lux: rd.lux,
                            tint: NSColor(srgbRed: g.r, green: g.g, blue: g.b, alpha: 1),
-                           bright: brightPct)
-        } else if let b = brightPct {
-            readout.message(String(format: "яркость %.0f %%", b * 100))
+                           bright: miLuminance.map { Double($0) / 100.0 })
         }
 
-        log(String(format: "tt=%@ bright=%.2f  gains %.3f/%.3f/%.3f",
-                   ttActive ? "on" : "off", display.brightness, g.r, g.g, g.b))
+        log(String(format: "tt=on  mi-lum=%@  gains %.3f/%.3f/%.3f",
+                   miLuminance.map(String.init) ?? "-", g.r, g.g, g.b))
     }
 
     private let nativeCCT: Double = 6500
