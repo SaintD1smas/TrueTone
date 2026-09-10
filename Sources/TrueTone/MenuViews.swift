@@ -5,6 +5,18 @@ let kMenuWidth: CGFloat = 268
 /// have to match it by hand or they sit visibly further left.
 let kMenuTextInset: CGFloat = 21
 
+/// Round `raw` to the nearest `step`, then clamp. Integer division toward zero
+/// used to turn −30 K with a 50 K step into 0 instead of −50.
+func snapSteppedValue(_ raw: Double, step: Int, min: Int, max: Int) -> Int {
+    let v: Int
+    if step > 1 {
+        v = Int((raw / Double(step)).rounded(.toNearestOrAwayFromZero)) * step
+    } else {
+        v = Int(raw.rounded())
+    }
+    return Swift.min(Swift.max(v, min), max)
+}
+
 /// Top of the menu: app name + an on/off switch.
 @MainActor
 final class HeaderView: NSView {
@@ -116,7 +128,6 @@ final class SliderRow: NSView {
     private let caption: NSTextField
     private let value = NSTextField(labelWithString: "")
     private let slider: NSSlider
-    private let hint: NSTextField?
     private let format: (Int) -> String
     var onChange: ((Int) -> Void)?
     /// Snap the value to this increment (the trim slider moves in 50 K steps).
@@ -127,13 +138,18 @@ final class SliderRow: NSView {
     /// as a quantity — but `trackFillColor` paints a dark bar whatever colour it
     /// is given, so instead the midpoint is ticked and the half-filled track
     /// reads as "middle of the range".
-    init(title: String, min: Double, max: Double, hint: String? = nil,
-         bipolar: Bool = false, format: @escaping (Int) -> String) {
+    ///
+    /// `ends` is a pair of captions anchored to the slider's left and right
+    /// (Night Shift's "Less Warm" / "More Warm"). A single left-aligned hint
+    /// sat off-centre under a 0-centred knob.
+    init(title: String, min: Double, max: Double,
+         ends: (String, String)? = nil,
+         bipolar: Bool = false,
+         format: @escaping (Int) -> String) {
         self.caption = NSTextField(labelWithString: title)
         self.slider = NSSlider(value: min, minValue: min, maxValue: max, target: nil, action: nil)
-        self.hint = hint.map { NSTextField(labelWithString: $0) }
         self.format = format
-        let h: CGFloat = hint == nil ? 50 : 62
+        let h: CGFloat = ends == nil ? 50 : 66
         super.init(frame: NSRect(x: 0, y: 0, width: kMenuWidth, height: h))
 
         let top = h - 20
@@ -145,9 +161,7 @@ final class SliderRow: NSView {
         value.frame = NSRect(x: kMenuWidth - kMenuTextInset - 96, y: top, width: 96, height: 16)
         slider.frame = NSRect(x: kMenuTextInset - 2, y: top - 26, width: kMenuWidth - 2 * kMenuTextInset + 4, height: 20)
         slider.isContinuous = true
-        // A centred control shouldn't grow a bar from the left edge — the knob
-        // position carries the value. .clear renders black and the label greys are
-        // all darker than the groove, so match the groove explicitly per theme.
+        slider.setAccessibilityLabel(title)
         if bipolar {
             slider.numberOfTickMarks = 3          // ends + the neutral midpoint
             slider.tickMarkPosition = .below
@@ -157,27 +171,45 @@ final class SliderRow: NSView {
         slider.action = #selector(changed)
         addSubview(caption); addSubview(value); addSubview(slider)
 
-        if let hintLabel = self.hint {
-            hintLabel.font = .systemFont(ofSize: 10)
-            hintLabel.textColor = .tertiaryLabelColor
-            hintLabel.frame = NSRect(x: kMenuTextInset, y: 2, width: kMenuWidth - 2 * kMenuTextInset, height: 13)
-            addSubview(hintLabel)
+        if let ends {
+            let w: CGFloat = 90
+            let y: CGFloat = 2
+            let left = Self.endLabel(ends.0, alignment: .left)
+            left.frame = NSRect(x: slider.frame.minX + 2, y: y, width: w, height: 13)
+            let right = Self.endLabel(ends.1, alignment: .right)
+            right.frame = NSRect(x: slider.frame.maxX - 2 - w, y: y, width: w, height: 13)
+            addSubview(left); addSubview(right)
         }
     }
     required init?(coder: NSCoder) { nil }
 
+    private static func endLabel(_ text: String, alignment: NSTextAlignment) -> NSTextField {
+        let t = NSTextField(labelWithString: text)
+        t.font = .systemFont(ofSize: 10)
+        t.textColor = .tertiaryLabelColor
+        t.alignment = alignment
+        return t
+    }
+
+    private func snapped(_ raw: Double) -> Int {
+        snapSteppedValue(raw, step: step,
+                         min: Int(slider.minValue.rounded()),
+                         max: Int(slider.maxValue.rounded()))
+    }
+
     func set(_ v: Int) {
-        let snapped = step > 1 ? (v / step) * step : v
-        slider.doubleValue = Double(snapped)
-        value.stringValue = format(snapped)
+        let s = snapped(Double(v))
+        slider.doubleValue = Double(s)
+        value.stringValue = format(s)
     }
     func setEnabled(_ on: Bool) {
         slider.isEnabled = on
         caption.textColor = on ? .labelColor : .tertiaryLabelColor
+        value.textColor = on ? .secondaryLabelColor : .tertiaryLabelColor
     }
     @objc private func changed() {
-        var v = Int(slider.doubleValue.rounded())
-        if step > 1 { v = (v / step) * step }
+        let v = snapped(slider.doubleValue)
+        slider.doubleValue = Double(v)
         value.stringValue = format(v)
         onChange?(v)
     }

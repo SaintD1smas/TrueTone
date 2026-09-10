@@ -37,7 +37,9 @@ enum DDCBrightness {
     private static var displayIndex: String? {
         if let cachedIndex { return cachedIndex }
         guard displayReady else { return nil }      // don't probe with no panel attached
-        for line in (run(["display", "list"]) ?? "").split(separator: "\n") {
+        // Same lock as every other DDC call — `display list` talks to the MCU too.
+        guard let out = withLock({ run(["display", "list"]) }) ?? nil else { return nil }
+        for line in out.split(separator: "\n") {
             // "[1] Mi Monitor (UUID)"  — skip "(null)" entries
             guard let close = line.firstIndex(of: "]"), line.hasPrefix("[") else { continue }
             let idx = String(line[line.index(after: line.startIndex)..<close])

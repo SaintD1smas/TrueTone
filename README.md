@@ -87,6 +87,7 @@ light 4400 K  →  screen 6100 K
 Color
   Strength      100 %                 how much of the adaptation to apply
   Trim              0                 manual ±1000 K bias, 50 K steps
+  Warmer ———●——— Cooler               end labels, centred on the 0 knob
 Brightness
   ✓ Match MacBook                     backlight follows F1/F2 over DDC
   Mi brightness  63 %                 manual level (disabled while matching)
@@ -248,7 +249,7 @@ complaint and has not yet been used in anger.
 
 **Open, deliberately:** tint (green↔magenta) correction — the last real colour
 gap, repeatedly offered and declined, and hard because the sensor doesn't expose
-chromaticity. `truetone status` still prints two Russian lines.
+chromaticity.
 
 **Known and unfixed, low priority:** `cachedIndex` is read on main and written on
 the DDC queue (benign-ish race); `apply()` re-uploads the whole gamma table each

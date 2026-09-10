@@ -33,6 +33,14 @@ struct WhitePointModel {
     /// Advance the model by `dt` seconds toward the target implied by the reading.
     mutating func update(lux: Double, ambientCCT: Double, dt: Double) {
         let target = targetMired(lux: lux, ambientCCT: ambientCCT)
+        let native = 1_000_000 / nativeCCT
+        // Deadband is ~63 K at D65. That's fine for ignoring sensor wobble on
+        // the way *toward* a room colour, but it parked Strength=0 / "too dark"
+        // ~60 K warm of native and left a faint tint on the Mi.
+        if abs(target - native) < 1e-9 {
+            currentMired = native
+            return
+        }
         guard let cur = currentMired else { currentMired = target; return }
 
         if abs(target - cur) < deadbandMired { return }

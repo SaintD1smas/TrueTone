@@ -46,7 +46,7 @@ final class MenuBarController: NSObject {
     private let scale = ScaleView()
     private let strength = SliderRow(title: "Strength", min: 0, max: 100) { "\($0) %" }
     private let trim = SliderRow(title: "Trim", min: -1000, max: 1000,
-                                 hint: "← warmer   ·   cooler →", bipolar: true) { k in
+                                 ends: ("Warmer", "Cooler"), bipolar: true) { k in
         k == 0 ? "0" : (k < 0 ? "warmer \(-k) K" : "cooler \(k) K")
     }
     private let brightness = SliderRow(title: "Mi brightness", min: 0, max: 100) { "\($0) %" }
@@ -98,6 +98,13 @@ final class MenuBarController: NSObject {
         DistributedNotificationCenter.default().addObserver(
             self, selector: #selector(handleRevealNotification),
             name: .init("com.dmitriy.truetone.reveal"), object: nil)
+
+        lastSyncedEnabled = settings.enabled
+        lastSyncedMenuBar = settings.showInMenuBar
+        lastSyncedPercent = settings.intensityPercent
+        lastSyncedTrim = settings.trimK
+        lastSyncedBright = settings.syncBrightness
+        lastSyncedManual = settings.manualBrightnessPercent
 
         lastTick = Date()
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -313,10 +320,6 @@ final class MenuBarController: NSObject {
         refreshUI()
         tick()
     }
-
-    /// Record "the screens match right now". Two such points, taken at clearly
-    /// different MacBook levels, define both the offset and the slope — which is
-    /// why there are no separate min/max controls.
 
     @objc private func resetCalibration() {
         brightnessMap.reset()

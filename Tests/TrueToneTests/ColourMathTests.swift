@@ -122,6 +122,16 @@ private func settled(lux: Double, cct: Double,
     #expect(m.displayCCT ~= m.nativeCCT)
 }
 
+/// Live: Strength 0 left the Mi ~60 K warm of native. The deadband is 1.5 mired
+/// (~63 K at D65), so easing toward native stopped short and a faint tint stayed.
+@Test func droppingStrengthToZeroFromAnAdaptedStateReachesNative() {
+    var m = settled(lux: 300, cct: 3500)
+    #expect(m.displayCCT < m.nativeCCT - 50)
+    m.intensity = 0
+    for _ in 0..<40 { m.update(lux: 300, ambientCCT: 3500, dt: 0.5) }
+    #expect(m.displayCCT ~= m.nativeCCT)
+}
+
 @Test func targetNeverGoesBelowTheFloor() {
     let m = settled(lux: 5000, cct: 2000) { $0.intensity = 1 }
     #expect(m.displayCCT >= m.floorCCT - 1)

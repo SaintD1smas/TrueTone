@@ -91,3 +91,14 @@ import Testing
     #expect(m.isCalibrated == false)
     #expect(m.luminance(forBuiltin: 0.63) == 63)
 }
+
+@Test func steppedSnapRoundsAwayFromZeroNotToward() {
+    // The trim slider's old `v / step * step` truncated toward zero, so a
+    // stored −30 K with a 50 K step displayed as 0.
+    #expect(snapSteppedValue(-30, step: 50, min: -1000, max: 1000) == -50)
+    #expect(snapSteppedValue(-24, step: 50, min: -1000, max: 1000) == 0)
+    #expect(snapSteppedValue(30, step: 50, min: -1000, max: 1000) == 50)
+    #expect(snapSteppedValue(0, step: 50, min: -1000, max: 1000) == 0)
+    #expect(snapSteppedValue(1075, step: 50, min: -1000, max: 1000) == 1000)
+    #expect(snapSteppedValue(63, step: 1, min: 0, max: 100) == 63)
+}

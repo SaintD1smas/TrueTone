@@ -19,25 +19,30 @@ final class DisplayController {
         // A previous run may have died while tinted; start from the clean
         // calibrated state so the captured base ramps are correct.
         CGDisplayRestoreColorSyncSettings()
-        registerReconfigurationCallback()
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        CGDisplayRegisterReconfigurationCallback(Self.reconfigCallback, ctx)
+    }
+
+    deinit {
+        CGDisplayRemoveReconfigurationCallback(
+            Self.reconfigCallback, Unmanaged.passUnretained(self).toOpaque())
     }
 
     /// Sleep/wake and reconnects change display IDs and reset gamma. Without
     /// this, a cached "base" ramp can end up being one we had already tinted,
     /// and the shift compounds a little on every cycle.
-    private func registerReconfigurationCallback() {
-        let ctx = Unmanaged.passUnretained(self).toOpaque()
-        CGDisplayRegisterReconfigurationCallback({ _, flags, userInfo in
-            guard let userInfo else { return }
-            // Act when configuration *finishes*, not on the begin notification.
-            if flags.contains(.beginConfigurationFlag) { return }
-            let interesting: CGDisplayChangeSummaryFlags =
-                [.addFlag, .removeFlag, .enabledFlag, .disabledFlag, .setModeFlag]
-            guard !flags.intersection(interesting).isEmpty else { return }
-            Unmanaged<DisplayController>.fromOpaque(userInfo)
-                .takeUnretainedValue()
-                .invalidateBaseline()
-        }, ctx)
+    ///
+    /// CoreGraphics may fire this off the main thread. Mutating `base` and
+    /// calling the owner's MainActor hook from there is a data race — hop first.
+    private static let reconfigCallback: CGDisplayReconfigurationCallBack = { _, flags, userInfo in
+        guard let userInfo else { return }
+        // Act when configuration *finishes*, not on the begin notification.
+        if flags.contains(.beginConfigurationFlag) { return }
+        let interesting: CGDisplayChangeSummaryFlags =
+            [.addFlag, .removeFlag, .enabledFlag, .disabledFlag, .setModeFlag]
+        guard !flags.intersection(interesting).isEmpty else { return }
+        let ctrl = Unmanaged<DisplayController>.fromOpaque(userInfo).takeUnretainedValue()
+        DispatchQueue.main.async { ctrl.invalidateBaseline() }
     }
 
     /// Drop the cached base ramps and put the panel back to its calibrated state,

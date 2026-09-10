@@ -10,7 +10,7 @@ truetone show            show the menu-bar icon
 truetone hide            hide it (this command / ⌃⌥⌘T bring it back)
 truetone toggle          flip icon visibility
 truetone on | off        turn the True Tone effect on / off
-truetone <0-100>         set "Сила" (adaptation strength)
+truetone <0-100>         set Strength (adaptation strength)
 truetone bright on|off   sync the Mi's brightness to the MacBook keys
 truetone bright <0-100>  set the Mi's brightness manually (turns sync off)
 truetone status          print current settings
@@ -43,9 +43,9 @@ case "$1" in
     on)     defaults write "$D" enabled -bool true ;;
     off)    defaults write "$D" enabled -bool false ;;
     status)
-        if pgrep -x TrueTone >/dev/null; then echo "запущен (pid $(pgrep -x TrueTone))"; else echo "НЕ ЗАПУЩЕН"; fi
+        if pgrep -x TrueTone >/dev/null; then echo "running (pid $(pgrep -x TrueTone))"; else echo "NOT RUNNING"; fi
         note=$(defaults read "$D" healthNote 2>/dev/null || echo "ok")
-        [ "$note" = "ok" ] && echo "состояние: ok" || echo "состояние: ⚠︎ $note"
+        [ "$note" = "ok" ] && echo "health: ok" || echo "health: ⚠︎ $note"
         echo "---"
         defaults read "$D" 2>/dev/null || echo "(no settings yet — all defaults)"
         exit 0 ;;
