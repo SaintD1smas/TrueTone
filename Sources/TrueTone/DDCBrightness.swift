@@ -20,6 +20,15 @@ enum DDCBrightness {
     nonisolated(unsafe) private static var lastWritten: Int?
     nonisolated(unsafe) private static var lastWriteAt: Date = .distantPast
     nonisolated(unsafe) private static var pending: Int?
+    /// Consecutive failed writes, used to back off. A panel that refuses DDC used
+    /// to cost one m1ddc process per tick of the 0.12 s brightness timer.
+    nonisolated(unsafe) private static var failures = 0
+
+    /// Spacing before the next write attempt: the normal floor while the panel is
+    /// answering, seconds once it isn't.
+    private static var writeInterval: TimeInterval {
+        failures == 0 ? minWriteInterval : min(Double(failures), 5)
+    }
 
     private static let binary: String? = {
         for p in ["/opt/homebrew/bin/m1ddc", "/usr/local/bin/m1ddc"]
@@ -27,41 +36,65 @@ enum DDCBrightness {
         return nil
     }()
 
-    /// Index of the external monitor in `m1ddc display list` (the first named one).
+    /// Arguments that pick the panel on m1ddc's command line.
+    ///
+    /// Preferably `["display", "<n>"]` from `display list`, but m1ddc 1.2.0
+    /// segfaults on *any* `display` argument — `display list` included — as soon
+    /// as a virtual screen is attached, and an iPad over Sidecar is enough. So
+    /// the index is a preference, not a requirement: with one external monitor
+    /// m1ddc's bare form addresses it correctly, and that form keeps working.
     ///
     /// Resolved lazily and *not* latched on failure: the app autostarts at login
     /// and the Mi can take ~10 s to come up, so a one-shot `static let` here left
     /// brightness sync permanently dead after every reboot.
-    nonisolated(unsafe) private static var cachedIndex: String?
+    nonisolated(unsafe) private static var cachedSelector: [String]?
 
-    private static var displayIndex: String? {
-        if let cachedIndex { return cachedIndex }
+    /// Set once the panel has actually answered something. Lets the menu tell
+    /// "m1ddc isn't installed" from "the monitor isn't talking" — one misleading
+    /// message used to cover both.
+    nonisolated(unsafe) private static var answered = false
+
+    private static var selector: [String]? {
+        if let cachedSelector { return cachedSelector }
         guard displayReady else { return nil }      // don't probe with no panel attached
         // Same lock as every other DDC call — `display list` talks to the MCU too.
-        guard let out = withLock({ run(["display", "list"]) }) ?? nil else { return nil }
+        let s = (withLock({ listIndex() }) ?? nil).map { ["display", $0] } ?? []
+        cachedSelector = s
+        return s
+    }
+
+    /// The monitor's index in `m1ddc display list`, or nil when m1ddc can't list.
+    private static func listIndex() -> String? {
+        guard let out = run(["display", "list"]) else { return nil }
         for line in out.split(separator: "\n") {
             // "[1] Mi Monitor (UUID)"  — skip "(null)" entries
             guard let close = line.firstIndex(of: "]"), line.hasPrefix("[") else { continue }
             let idx = String(line[line.index(after: line.startIndex)..<close])
             let rest = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
-            if !rest.hasPrefix("(null)") { cachedIndex = idx; return idx }
+            if !rest.hasPrefix("(null)") { return idx }
         }
         return nil
     }
 
     /// Forget the resolved display (call when the display set changes).
     static func displaysChanged() {
-        queue.async { cachedIndex = nil; lastWritten = nil; pending = nil }
+        queue.async { cachedSelector = nil; answered = false; failures = 0
+            lastWritten = nil; pending = nil }
     }
 
     /// Cheap and non-blocking — safe to call from the main thread every tick.
     /// It reports what we already know; probing happens on `queue` via prepare().
-    static var isAvailable: Bool { binary != nil && cachedIndex != nil }
+    static var isAvailable: Bool { binary != nil && answered }
 
-    /// Resolve the display index off the main thread. Safe to call repeatedly.
+    /// Whether m1ddc is on disk at all — distinct from the panel answering.
+    static var isInstalled: Bool { binary != nil }
+
+    /// Resolve how to address the display, off the main thread. Safe to call
+    /// repeatedly. The check belongs on `queue`: done on the caller's thread it
+    /// raced `displaysChanged()`, saw a not-yet-cleared value and never re-probed.
     static func prepare() {
-        guard binary != nil, cachedIndex == nil else { return }
-        queue.async { _ = displayIndex }
+        guard binary != nil else { return }
+        queue.async { _ = selector }
     }
 
     /// Read the panel's current luminance off the main thread.
@@ -136,16 +169,20 @@ enum DDCBrightness {
             return nil
         }
         p.waitUntilExit()
+        // A crash or a refusal prints nothing, and treating that as an empty
+        // success let `write` record values the panel never received.
+        guard p.terminationStatus == 0 else { return nil }
         return String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Read the panel's current luminance. Only safe to call when idle — reads
     /// right after a write come back as errors. Used once, at startup.
     static func read() -> Int? {
-        guard displayReady, let idx = displayIndex else { return nil }
-        guard let out = withLock({ run(["display", idx, "get", "luminance"]) }) ?? nil,
+        guard displayReady, let sel = selector else { return nil }
+        guard let out = withLock({ run(sel + ["get", "luminance"]) }) ?? nil,
               let v = Int(out), (0...100).contains(v)
         else { return nil }
+        answered = true
         return v
     }
 
@@ -156,10 +193,11 @@ enum DDCBrightness {
         queue.async {
             guard v != lastWritten else { return }
             let since = Date().timeIntervalSince(lastWriteAt)
-            if since < minWriteInterval {
+            let gap = writeInterval
+            if since < gap {
                 // coalesce: remember the latest target, flush after the gap
                 pending = v
-                queue.asyncAfter(deadline: .now() + (minWriteInterval - since)) {
+                queue.asyncAfter(deadline: .now() + (gap - since)) {
                     if let p = pending { pending = nil; write(p) }
                 }
                 return
@@ -169,11 +207,19 @@ enum DDCBrightness {
     }
 
     private static func write(_ v: Int) {
-        guard let idx = displayIndex, v != lastWritten, displayReady else { return }
-        // If the wake-repair scripts hold the lock, skip — the next tick retries.
-        guard withLock({ run(["display", idx, "set", "luminance", String(v)]) }) != nil else { return }
-        lastWritten = v
+        guard let sel = selector, v != lastWritten, displayReady else { return }
+        // Stamp the attempt, not the success. Keyed off success, a failing write
+        // left this at `.distantPast`, so the rate limit never engaged and the
+        // brightness timer spawned an m1ddc every 0.12 s against a dead panel.
         lastWriteAt = Date()
+        // If the wake-repair scripts hold the lock, skip — the next tick retries.
+        guard (withLock({ run(sel + ["set", "luminance", String(v)]) }) ?? nil) != nil else {
+            failures += 1
+            return
+        }
+        failures = 0
+        answered = true
+        lastWritten = v
     }
 
 }

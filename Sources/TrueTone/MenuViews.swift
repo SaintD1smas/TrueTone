@@ -45,6 +45,35 @@ final class HeaderView: NSView {
     @objc private func changed() { onToggle?(toggle.state == .on) }
 }
 
+/// The warning row. As a plain menu-item title it made the menu grow to fit the
+/// longest message, and every fixed-width row below it then floated off-centre;
+/// this pins the width and wraps instead.
+@MainActor
+final class ProblemView: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let inset = kMenuTextInset
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: kMenuWidth, height: 32))
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 3
+        addSubview(label)
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func set(_ message: String) {
+        label.stringValue = "\u{26A0}\u{FE0E}  " + message
+        let w = kMenuWidth - 2 * inset
+        let h = ceil(label.attributedStringValue.boundingRect(
+            with: NSSize(width: w, height: 200),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
+        label.frame = NSRect(x: inset, y: 7, width: w, height: h)
+        frame.size.height = h + 14
+    }
+}
+
 /// Warm↔cool scale showing where the room light is and where we've put the
 /// screen. Replaces a swatch that was invisible whenever the tint was subtle.
 @MainActor

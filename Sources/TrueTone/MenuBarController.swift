@@ -7,14 +7,15 @@ final class MenuBarController: NSObject {
     /// a row at the top of the menu — previously you could only find out by
     /// opening the menu and noticing the readout had gone quiet.
     private enum Health: Equatable {
-        case ok, noDisplay, noSensor, noDDC, noBuiltin
+        case ok, noDisplay, noSensor, noDDC, ddcSilent, noBuiltin
 
         var message: String? {
             switch self {
             case .ok:        return nil
             case .noDisplay: return "no external display"
             case .noSensor:  return "light sensor unavailable"
-            case .noDDC:     return "m1ddc missing — brightness not controlled"
+            case .noDDC:     return "m1ddc not installed — brightness not controlled"
+            case .ddcSilent: return "monitor isn\u{2019}t answering DDC — brightness not controlled"
             case .noBuiltin: return "lid closed — no brightness to follow"
             }
         }
@@ -52,6 +53,7 @@ final class MenuBarController: NSObject {
     private let brightness = SliderRow(title: "Mi brightness", min: 0, max: 100) { "\($0) %" }
 
     // menu items
+    private let problem = ProblemView()
     private let problemItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let brightnessToggle = NSMenuItem(title: "Match MacBook", action: nil, keyEquivalent: "")
     private let calibrationReset = NSMenuItem(title: "Reset brightness match", action: nil, keyEquivalent: "")
@@ -138,6 +140,7 @@ final class MenuBarController: NSObject {
 
         menu.addItem(hosting(header))
 
+        problemItem.view = problem
         problemItem.isEnabled = false
         problemItem.isHidden = true
         menu.addItem(problemItem)
@@ -201,7 +204,7 @@ final class MenuBarController: NSObject {
         loginToggle.state = LoginItem.isEnabled ? .on : .off
 
         if let msg = health.message {
-            problemItem.title = "⚠︎  " + msg
+            problem.set(msg)
             problemItem.isHidden = false
         } else {
             problemItem.isHidden = true
@@ -447,11 +450,11 @@ final class MenuBarController: NSObject {
                 brightness.set(target)          // mirror on the disabled slider
                 log(String(format: "[bright] bb=%.3f -> %d (%@)", bb, target, brightnessMap.summary))
             }
-            currentMiLum = target
+            currentMiLum = DDCBrightness.isAvailable ? target : nil
         } else {
             let target = settings.manualBrightnessPercent
             DDCBrightness.set(target)
-            currentMiLum = target
+            currentMiLum = DDCBrightness.isAvailable ? target : nil
         }
     }
 
@@ -486,7 +489,8 @@ final class MenuBarController: NSObject {
         let newHealth: Health =
             !hasDisplay ? .noDisplay
             : sensor == nil || reading == nil ? .noSensor
-            : (settings.syncBrightness && !DDCBrightness.isAvailable) ? .noDDC
+            : (settings.syncBrightness && !DDCBrightness.isInstalled) ? .noDDC
+            : (settings.syncBrightness && !DDCBrightness.isAvailable) ? .ddcSilent
             // Clamshell: nothing to follow, so sync looks on but does nothing.
             : (settings.syncBrightness && BuiltinBrightness.read() == nil) ? .noBuiltin
             : .ok
