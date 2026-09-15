@@ -51,10 +51,18 @@ struct BrightnessMap: Equatable {
     /// anchors, so re-recording near an existing one refines it instead of
     /// collapsing the calibration onto a single brightness.
     mutating func record(builtin: Double, luminance: Int) {
+        // An anchor outside the range we can actually drive is not a match the
+        // user saw: the manual slider reaches 0, and "at 62 % I wanted 0" got
+        // stored as gospel.
+        let lum = min(max(luminance, Self.hardMin), Self.hardMax)
         var pts = anchors.filter { abs($0.b - builtin) > Self.minSpread / 2 }
-        pts.append((builtin, luminance))
+        pts.append((builtin, lum))
         pts.sort { $0.b < $1.b }
         if pts.count > 2 { pts = [pts.first!, pts.last!] }
+        // Brightness cannot run backwards, and a flat pair leaves the panel
+        // parked. Either way the pair pinned the Mi whatever the keys did, so
+        // keep what was just recorded and drop the point that contradicts it.
+        if pts.count == 2, pts[1].lum <= pts[0].lum { pts = [(builtin, lum)] }
 
         loBuiltin = pts.first?.b;  loLum = pts.first?.lum
         if pts.count > 1 {

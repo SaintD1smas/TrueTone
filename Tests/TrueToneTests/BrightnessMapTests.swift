@@ -84,6 +84,30 @@ import Testing
     #expect(m.luminance(forBuiltin: 0.40) > BrightnessMap.hardMin)
 }
 
+@Test func anchorsAreClampedToTheDrivableRange() {
+    // The manual slider reaches 0, and switching sync back on recorded that as
+    // "at this MacBook level I wanted 0" — a level the panel is never driven to.
+    var m = BrightnessMap()
+    m.record(builtin: 0.62, luminance: 0)
+    #expect(m.luminance(forBuiltin: 0.62) == BrightnessMap.hardMin)
+    #expect(m.luminance(forBuiltin: 1.0) > BrightnessMap.hardMin)
+}
+
+@Test func anInvertedPairIsRefused() {
+    // Real case: (0 -> 5) plus (0.625 -> 0) gave a negative slope, so the Mi sat
+    // at its floor at every MacBook level.
+    var m = BrightnessMap()
+    m.record(builtin: 0.0, luminance: 5)
+    m.record(builtin: 0.625, luminance: 0)
+    var previous = -1
+    for step in 0...20 {
+        let v = m.luminance(forBuiltin: Double(step) / 20)
+        #expect(v >= previous)
+        previous = v
+    }
+    #expect(m.luminance(forBuiltin: 1.0) > m.luminance(forBuiltin: 0.0))
+}
+
 @Test func resetGoesBackToOneToOne() {
     var m = BrightnessMap()
     m.record(builtin: 0.30, luminance: 90)
