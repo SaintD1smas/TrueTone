@@ -63,7 +63,25 @@ if ! launchctl bootstrap "gui/$UID_" "$PLIST" 2>/dev/null; then
     # already registered / transitioning — just (re)start it
     launchctl enable "gui/$UID_/$LABEL" 2>/dev/null || true
 fi
-launchctl kickstart -k "gui/$UID_/$LABEL"
+# kickstart can answer "Domain does not support specified action" while the
+# service is still settling from the bootout above. That is not fatal — but with
+# `set -e` it aborted the script after a perfectly good install, leaving the app
+# not running and the user staring at an error.
+launchctl kickstart -k "gui/$UID_/$LABEL" 2>/dev/null || true
+sleep 1
+pgrep -x TrueTone >/dev/null || open -a "$APP" 2>/dev/null || true
+sleep 1
+
+if ! pgrep -x TrueTone >/dev/null; then
+    echo "! Installed, but it did not start."
+    echo "  Open TrueTone from ~/Applications, or check /tmp/truetone.log"
+    exit 1
+fi
+
+command -v m1ddc >/dev/null || {
+    echo "! m1ddc not found — colour will work, brightness control will not."
+    echo "  brew install m1ddc, then re-run this script."
+}
 
 echo "✓ TrueTone is running and will start at login."
 echo "  hide/show icon:  truetone hide  /  truetone show   (or hotkey ⌃⌥⌘T)"
