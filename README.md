@@ -1,36 +1,58 @@
 # TrueTone
 
-A personal macOS menu-bar app that reproduces Apple's **True Tone** on an
-**external monitor** (Xiaomi "Mi Monitor", USB-C), driven by the MacBook's own
-ambient-light sensor — and syncs that monitor's **backlight** to the MacBook's
-brightness keys.
+Apple's **True Tone** shifts the built-in display's white point toward the colour
+of the light in your room. Apple does not do this for external monitors.
 
-Target machine: MacBook Air M3 (`Mac15,12`), macOS 15.7.2, Apple Silicon.
-Personal use only — private APIs are fair game, the App Store is not a goal.
-UI strings are English; the owner's working language is Russian.
+TrueTone is a small macOS menu-bar app that does: it drives an external monitor's
+white point from the MacBook's own ambient-light sensor, and syncs that monitor's
+backlight to the MacBook's brightness keys over DDC/CI.
 
-<img src="docs/menu.png" width="268" alt="The TrueTone menu: a warm-to-cool scale showing room light against screen white point, Strength and Trim sliders, and brightness matching.">
+<img src="docs/menu.png" width="268" alt="The TrueTone menu: a warm-to-cool scale showing room light against the screen's white point, Strength and Trim sliders, and brightness matching.">
 
-The menu bar carries a half-filled ring — <img src="docs/menubar-icon.png" width="18" alt="menu-bar icon"> — struck through when something needs attention.
+Backlight sync on its own is well covered by Lunar and MonitorControl. What this
+adds is the colour half: the sensor's ambient **colour temperature** is read
+directly from the HID event, and the per-channel gains are computed in the
+panel's **own primaries**, taken from its EDID — not sRGB, which over-warms a
+wide-gamut screen by a visible margin.
+
+The menu bar carries a half-filled ring — <img src="docs/menubar-icon.png" width="16" alt="menu-bar icon"> — struck through when something needs attention.
+
+---
+
+## Will this work for your setup?
+
+Written and verified against exactly one pairing:
+
+- **MacBook Air M3** (`Mac15,12`), macOS 15.7.2, Apple Silicon
+- **Xiaomi Mi Monitor** over USB-C (DisplayPort Alt Mode)
+
+It should run against any DDC-capable external monitor on an Apple Silicon Mac
+that has an ambient-light sensor — the panel's primaries are read from its EDID
+rather than hardcoded — but the adaptation curve was tuned by eye against this
+one, and every hazard below is about this one.
+
+It uses private Apple APIs and is neither signed nor notarised. It is not an App
+Store app and is not trying to become one. Read the hazards before you run it.
 
 ---
 
 ## Read this first (hazards)
 
-**This monitor's controller can be wedged, and recovery is a 30-second unplug.**
-See `~/.monitor_ddc.zsh` and the owner's monitor LaunchAgents — they exist
-because of past incidents. Rules that are not negotiable:
+**A monitor's DDC controller can be wedged, and recovery is a power cycle.** On
+this panel that meant unplugging it from the wall for 30 seconds. These rules
+exist because of past incidents and are not negotiable:
 
 - **Never write VCP `D6`** (`m1ddc set standby 4/5`). Hard-off powers the scaler
   down, the USB-C sink disappears, and nothing software can bring it back.
-- **Never switch input away from USB-C (16).** Parking on an empty HDMI input
-  drops the DP link; macOS then has no display and DDC has no route home.
+- **Never switch input away from the one carrying your picture** (USB-C, 16, on
+  this setup). Parking on an empty input drops the link; macOS then has no
+  display and DDC has no route home.
 - **Never loop DDC.** Sustained set+get cycles wedge the MCU. Writes only, spaced
   out, and never a read immediately after a write (it returns an error value).
-- **Take the shared lock.** The owner's shell hooks guard every DDC call with a
-  `mkdir` mutex on `~/.monitor_hook.lock` (25 s staleness rule). `DDCBrightness`
-  takes the same one and skips the write if the hooks hold it. Anything new that
-  talks DDC must do likewise.
+- **Share a lock with anything else that talks DDC.** Here the owner's shell
+  hooks guard every DDC call with a `mkdir` mutex on `~/.monitor_hook.lock`
+  (25 s staleness rule); `DDCBrightness` takes the same one and skips its write
+  if the hooks hold it. If you run other DDC tools, make them agree on a lock.
 
 **Do not trust old conclusions in git history.** One commit states the panel
 rejects DDC brightness writes. It does not — that was a bug in a hand-rolled
@@ -214,6 +236,13 @@ built-in panel. It refuses the external one (`CanChangeBrightness` → 0), as do
 DCP, below CoreGraphics, so its gamma reads as identity. We can't mirror it; we
 compute our own from the same sensor.
 
+**m1ddc 1.2.0 segfaults on any `display` argument** — `display list` included —
+as soon as a virtual display is attached; an iPad over Sidecar or Universal
+Control is enough. Without a `display` selector it reads and writes the panel
+fine, so `DDCBrightness` treats the index as a preference, not a requirement,
+and falls back to the bare form. If your brightness control dies the moment you
+plug in an iPad, this is why.
+
 **Do not `dlopen` CoreBrightness in-process** — it destabilises the ObjC runtime.
 
 ---
@@ -255,20 +284,19 @@ anything you change in the maths.
 **Verified on hardware:** DDC backlight (built-in 62.5 % → Mi 63), panel-primary
 gains (B 0.958 → 0.974), lock cooperation (write skipped while held, applied on
 release), late-resolution recovery (`origLum` — → 58), menu layout and English
-strings, 28 tests.
+strings, 32 tests.
 
 **Written but never exercised:** the health/warning states (would need unplugging
 the monitor or removing m1ddc), the sleep/wake re-resolution paths, sensor
 re-creation, the struck-through icon in a live menu bar, and — most importantly —
-**implicit brightness calibration**, which addresses the owner's original
-complaint and has not yet been used in anger.
+**implicit brightness calibration**, the feature this was all for, which has
+not yet been used in anger.
 
 **Open, deliberately:** tint (green↔magenta) correction — the last real colour
 gap, repeatedly offered and declined, and hard because the sensor doesn't expose
 chromaticity.
 
-**Known and unfixed, low priority:** `cachedIndex` is read on main and written on
-the DDC queue (benign-ish race); `apply()` re-uploads the whole gamma table each
+**Known and unfixed, low priority:** `apply()` re-uploads the whole gamma table each
 tick even when unchanged; `invalidateBaseline()` shows one untinted tick on
 reconfigure; `reconcile()`'s `lastSynced*` start at defaults so the first tick
 always reports a change; the single-instance check is theoretically racy.
