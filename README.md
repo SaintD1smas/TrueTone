@@ -17,6 +17,12 @@ wide-gamut screen by a visible margin.
 
 The menu bar carries a half-filled ring — <img src="docs/menubar-icon.png" width="16" alt="menu-bar icon"> — struck through when something needs attention.
 
+**[Download TrueTone 1.0](https://github.com/SaintD1smas/TrueTone/releases/latest)** — a prebuilt `.app`, no Xcode needed. It is ad-hoc signed and not notarised, so clear the download quarantine before opening it:
+
+```
+xattr -dr com.apple.quarantine ~/Applications/TrueTone.app
+```
+
 ---
 
 ## Will this work for your setup?
