@@ -9,6 +9,10 @@ Target machine: MacBook Air M3 (`Mac15,12`), macOS 15.7.2, Apple Silicon.
 Personal use only — private APIs are fair game, the App Store is not a goal.
 UI strings are English; the owner's working language is Russian.
 
+<img src="docs/menu.png" width="268" alt="The TrueTone menu: a warm-to-cool scale showing room light against screen white point, Strength and Trim sliders, and brightness matching.">
+
+The menu bar carries a half-filled ring — <img src="docs/menubar-icon.png" width="18" alt="menu-bar icon"> — struck through when something needs attention.
+
 ---
 
 ## Read this first (hazards)
@@ -35,6 +39,18 @@ I2C frame. Verify against hardware before building on any claim here.
 ---
 
 ## Install and control
+
+**This is built for one specific pairing** — a MacBook Air M3 and a USB-C Xiaomi
+Mi Monitor — and it reads that panel's own EDID primaries to get the colour
+right. It will run against other DDC-capable monitors, but the tuning and the
+hazard notes above are about this hardware. Read the hazards first.
+
+Requirements:
+
+```
+xcode-select --install     # Swift toolchain
+brew install m1ddc         # backlight control over DDC/CI — without it, colour only
+```
 
 ```
 scripts/install.sh      # release build → ~/Applications/TrueTone.app → LaunchAgent
