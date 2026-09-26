@@ -314,3 +314,10 @@ Tests/TrueToneTests/
 scripts/        install.sh · uninstall.sh · truetone (CLI) · make-icon.swift
 Resources/      Info.plist · AppIcon.icns
 ```
+
+---
+
+## Author
+
+Built by **[SaintD1smas](https://github.com/SaintD1smas)**.
+Released under the [MIT License](LICENSE) — use it, change it, ship it.

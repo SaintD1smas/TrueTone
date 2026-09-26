@@ -14,5 +14,6 @@
     <key>LSMinimumSystemVersion</key>      <string>14.0</string>
     <key>LSUIElement</key>                 <true/>
     <key>NSHighResolutionCapable</key>     <true/>
+    <key>NSHumanReadableCopyright</key>    <string>© 2026 Dmitry (github.com/SaintD1smas) — MIT</string>
 </dict>
 </plist>
