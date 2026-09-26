@@ -17,11 +17,24 @@ wide-gamut screen by a visible margin.
 
 The menu bar carries a half-filled ring — <img src="docs/menubar-icon.png" width="16" alt="menu-bar icon"> — struck through when something needs attention.
 
-**[Download TrueTone 1.0](https://github.com/SaintD1smas/TrueTone/releases/latest)** — a prebuilt `.app`, no Xcode needed. It is ad-hoc signed and not notarised, so clear the download quarantine before opening it:
+## Install
 
 ```
-xattr -dr com.apple.quarantine ~/Applications/TrueTone.app
+curl -fsSL https://raw.githubusercontent.com/SaintD1smas/TrueTone/master/scripts/download-install.sh | bash
 ```
+
+That fetches the latest [release](https://github.com/SaintD1smas/TrueTone/releases/latest), checks the bundle's signature, clears the download quarantine and starts it. No Xcode, no Homebrew.
+
+For backlight control you also need `brew install m1ddc` — without it the colour half still works and the menu says so. Autostart is a toggle in the menu.
+
+Prefer to read before you run? [The script](scripts/download-install.sh) is 70 lines. Or build it yourself:
+
+```
+git clone https://github.com/SaintD1smas/TrueTone
+cd TrueTone && ./scripts/install.sh
+```
+
+> The published build is **ad-hoc signed, not notarised** — there is no paid Apple Developer ID behind it. That is the only reason the quarantine has to be cleared: without that step macOS reports the app as damaged, which it is not. If you would rather not take that on trust, build from source.
 
 ---
 
